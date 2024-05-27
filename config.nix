@@ -13,6 +13,8 @@
         k9s
         fluxcd
         tektoncd-cli
+        kubernetes-helm
+        micromamba
       ];
     };
   };
