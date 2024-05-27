@@ -28,6 +28,6 @@ update_prompt() {
     PS1+="$(kube_ps1) "
     PS1+="\[\033[31m\]➜  \[\033[0m\]"
 }
-source /usr/local/bin/kube-ps1
+source "$XDG_CONFIG_HOME"/kube-ps1
 PROMPT_COMMAND="update_prompt; $PROMPT_COMMAND"
 
