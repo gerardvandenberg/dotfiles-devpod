@@ -14,7 +14,7 @@
         fluxcd
         tektoncd-cli
         kubernetes-helm
-        miniconda3
+        conda
       ];
     };
   };
