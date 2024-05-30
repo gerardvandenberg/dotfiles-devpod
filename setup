@@ -16,13 +16,7 @@ ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME"/nixpkgs/config.nix
 nix-env -iA nixpkgs.myPackages
 
 exec bash
-if [ -f "$HOME/.conda/bin/conda" ]; then
-    source "$HOME/.conda/etc/profile.d/conda.sh"
-    conda init bash
-else
-    echo "Conda not found at $HOME/.conda/bin/conda"
-    exit 1
-fi
+conda init bash
 source "$HOME/.bashrc"
 conda create -n py311 python=3.11
 conda activate py311
