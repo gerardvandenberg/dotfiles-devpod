@@ -30,3 +30,5 @@ update_prompt() {
 }
 source ~/.config/kube-ps1.sh
 PROMPT_COMMAND="update_prompt; $PROMPT_COMMAND"
+
+conda activate py311
