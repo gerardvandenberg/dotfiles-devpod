@@ -18,4 +18,4 @@ nix-env -iA nixpkgs.myPackages
 $HOME/.nix-profile/bin/conda init bash
 source "$HOME/.bashrc"
 conda create -n py311 python=3.11 -y
-echo "\nconda activate py311" >> "$HOME/.bashrc"
+echo "conda activate py311" >> "$HOME/.bashrc"
