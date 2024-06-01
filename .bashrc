@@ -1,3 +1,7 @@
+if [ -f ~/.bash_aliases ]; then
+    . ~/.bash_aliases
+fi
+
 export FZF_DEFAULT_OPTS="--height 40% --layout=reverse --border --inline-info"
 
 source <(helm completion bash)
