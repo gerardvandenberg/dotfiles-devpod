@@ -14,9 +14,6 @@ alias trn='tmux rename-session -t'
 
 alias vim-be-good='docker run -it --rm brandoncc/vim-be-good:latest'
 
-alias nvim='~/nvim-linux64/bin/nvim'
-alias v='~/nvim-linux64/bin/nvim .'
-
  #################################
  #  _ S E C O N D _ B R A I N _  #
  #################################
