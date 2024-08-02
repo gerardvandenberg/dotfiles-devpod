@@ -16,7 +16,7 @@
         fluxcd
         tektoncd-cli
         kubernetes-helm
-        python311Packages.conda
+        # python311Packages.conda
       ];
     };
   };

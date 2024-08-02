@@ -26,8 +26,8 @@ condaenv_prompt() {
 }
 
 update_prompt() {
-    PS1='$(condaenv_prompt "|\[\033[01;32m\]%s\[\033[00m\]")'
-    PS1+='$(git_prompt "|\[\033[01;33m\]%s\[\033[00m\]")'
+    # PS1='$(condaenv_prompt "|\[\033[01;32m\]%s\[\033[00m\]")'
+    PS1='$(git_prompt "|\[\033[01;33m\]%s\[\033[00m\]")'
     PS1+="|\A \W "
     PS1+="$(kube_ps1)\n> "
     # PS1+="\[\033[31m\]➜  \[\033[0m\]"
