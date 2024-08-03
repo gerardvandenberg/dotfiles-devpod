@@ -1,0 +1,3 @@
+[submodule "kicksart.nvim"]
+	path = kicksart.nvim
+	url = git@github.com:micha-aucoin/kickstart.nvim.git
