@@ -1,3 +1,7 @@
+set -o vi
+export EDITOR=nvim
+export VISUAL=nvim
+
 if [ -f ~/.bash_aliases ]; then
     . ~/.bash_aliases
 fi
