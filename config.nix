@@ -7,6 +7,7 @@
         fzf
         go
         nodejs_22
+        micromamba
         fd
         ripgrep
         lazygit
@@ -16,7 +17,6 @@
         fluxcd
         tektoncd-cli
         kubernetes-helm
-        # python311Packages.conda
       ];
     };
   };
