@@ -18,8 +18,8 @@ ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME"/nixpkgs/config.nix
 nix-env -iA nixpkgs.myPackages
 
 ~/.nix-profile/bin/micromamba shell init -s bash
-micromamba config append channels conda-forge
-micromamba create -n py311 python=3.11 -y
+~/.nix-profile/bin/micromamba config append channels conda-forge
+~/.nix-profile/bin/micromamba create -n py311 python=3.11 -y
 
 # $HOME/.nix-profile/bin/conda init bash
 # source "$HOME/.bashrc"
