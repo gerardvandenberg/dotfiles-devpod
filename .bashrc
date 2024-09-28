@@ -8,6 +8,7 @@ fi
 
 export FZF_DEFAULT_OPTS="--height 40% --layout=reverse --border --inline-info"
 
+source "$XDG_CONFIG_HOME"/tmux-completion
 source <(helm completion bash)
 source <(tkn completion bash)
 source <(kubectl completion bash)
@@ -36,5 +37,5 @@ update_prompt() {
     PS1+="$(kube_ps1)\n> "
     # PS1+="\[\033[31m\]➜  \[\033[0m\]"
 }
-source ~/.config/kube-ps1.sh
+source "$XDG_CONFIG_HOME"/kube-ps1.sh
 PROMPT_COMMAND="update_prompt; $PROMPT_COMMAND"

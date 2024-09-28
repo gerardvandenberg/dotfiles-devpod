@@ -5,7 +5,8 @@ mkdir -p "$XDG_CONFIG_HOME"/nixpkgs
 
 git submodule update --init --recursive
 
-curl -o "$XDG_CONFIG_HOME"/kube-ps1.sh https://raw.githubusercontent.com/jonmosco/kube-ps1/master/kube-ps1.sh
+curl -o "$XDG_CONFIG_HOME"/kube-ps1.sh https://raw.githubusercontent.com/micha-aucoin/kube-ps1/refs/heads/master/kube-ps1.sh
+curl -o "$XDG_CONFIG_HOME"/tmux-completion https://raw.githubusercontent.com/micha-aucoin/bash-it/refs/heads/master/completion/available/tmux.completion.bash
 
 ln -sf "$PWD/kickstart.nvim" "$XDG_CONFIG_HOME"/nvim
 ln -sf "$PWD/.bash_aliases" "$HOME"/.bash_aliases
