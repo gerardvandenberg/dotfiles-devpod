@@ -45,7 +45,10 @@ main() {
 
         completion)
             cat << 'EOF'
-# Bash completion function for tmux-sessionizer
+####################################################
+#  Bash completion function for tmux-sessionizer   #
+# ~/.bashrc: source <(tmux-sessionizer completion) #
+####################################################
 _tmux_sessionizer_completions() {
     local cur prev opts
     # Retrieve current word and previous word
@@ -72,7 +75,6 @@ _tmux_sessionizer_completions() {
 
     return 0
 }
-
 # Register the completion function for tmux-sessionizer command
 complete -F _tmux_sessionizer_completions tmux-sessionizer
 EOF
