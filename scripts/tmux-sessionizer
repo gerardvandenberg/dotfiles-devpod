@@ -43,6 +43,19 @@ main() {
             tmux switch-client -t $selected_name
             ;;
 
+        delete)
+            selected_session=$(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="Select session to delete: ")
+
+            if [[ -z $selected_session ]]; then
+                exit 0
+            fi
+
+            read -p "Are you sure you want to delete the session '$selected_session'? [y/N]: " confirm
+            if [[ $confirm == [yY] ]]; then
+                tmux kill-session -t "$selected_session"
+            fi
+            ;;
+
         completion)
             cat << 'EOF'
 ####################################################
