@@ -13,6 +13,8 @@ source <(helm completion bash)
 source <(tkn completion bash)
 source <(kubectl completion bash)
 complete -o default -F __start_kubectl k
+source <(tmux-sessionizer completion)
+complete -F _tmux_sessionizer_completions ts
 
 git_prompt() {
     local format_string="$1"

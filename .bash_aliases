@@ -11,7 +11,7 @@ alias lslinode="curl -s https://api.linode.com/v4/linode/types | jq '.data[] | {
 alias tls='tmux ls'
 alias ta='tmux attach -t'
 alias trn='tmux rename-session -t'
-alias trn='tmux-sessionizer'
+alias ts='tmux-sessionizer'
 
 alias vim-be-good='docker run -it --rm brandoncc/vim-be-good:latest'
 

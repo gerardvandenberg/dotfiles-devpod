@@ -56,22 +56,13 @@ _tmux_sessionizer_completions() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define the possible commands for tmux-sessionizer
-    opts="switch create"
+    opts="switch create completion"
 
     # Complete the first argument (the command)
     if [[ ${COMP_CWORD} -eq 1 ]]; then
         COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
         return 0
     fi
-
-    case "${prev}" in
-        # If the previous argument is 'create', suggest directories
-        create)
-            local dir_opts=$(find ~/temp ~/.config -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
-            COMPREPLY=($(compgen -W "${dir_opts}" -- "${cur}"))
-            return 0
-            ;;
-    esac
 
     return 0
 }
