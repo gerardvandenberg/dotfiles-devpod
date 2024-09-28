@@ -97,7 +97,7 @@ EOF
             ;;
 
         *)
-            echo "Usage: $0 {switch|create|completion}"
+            echo "Usage: $0 {switch|create|delete|completion}"
             exit 1
             ;;
     esac
