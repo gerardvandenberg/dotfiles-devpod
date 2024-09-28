@@ -7,6 +7,12 @@ main() {
 
     case "$command" in
         switch)
+            tmux_running=$(pgrep tmux)
+
+            if [[ -z $tmux_running ]]; then
+                exit 0
+            fi
+
             if [ -n "$TMUX" ]; then
               # Inside tmux session, switch client
               tmux switch-client -t $(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="select sessionizer: ")
@@ -44,6 +50,12 @@ main() {
             ;;
 
         delete)
+            tmux_running=$(pgrep tmux)
+
+            if [[ -z $tmux_running ]]; then
+                exit 0
+            fi
+
             selected_session=$(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="Select session to delete: ")
 
             if [[ -z $selected_session ]]; then
