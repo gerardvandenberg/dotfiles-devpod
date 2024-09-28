@@ -1,26 +1,88 @@
 #!/usr/bin/env bash
 
-if [[ $# -eq 1 ]]; then
-    selected=$1
-else
-    # selected=$(find ~/work/builds ~/projects ~/ ~/work ~/personal ~/personal/yt -mindepth 1 -maxdepth 1 -type d | fzf)
-    selected=$(find ~/ ~/.config -mindepth 1 -maxdepth 1 -type d | fzf)
-fi
+# Main script
+main() {
+    local command=$1
+    shift
 
-if [[ -z $selected ]]; then
-    exit 0
-fi
+    case "$command" in
+        switch)
+            if [ -n "$TMUX" ]; then
+              # Inside tmux session, switch client
+              tmux switch-client -t $(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="select sessionizer: ")
+            else
+              # Outside tmux session, attach to session
+              tmux attach-session -t $(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="select sessionizer: ")
+            fi
+            ;;
 
-selected_name=$(basename "$selected" | tr . _)
-tmux_running=$(pgrep tmux)
+        create)
+            if [[ $# -eq 1 ]]; then
+                selected=$1
+            else
+                # selected=$(find ~/work/builds ~/projects ~/ ~/work ~/personal ~/personal/yt -mindepth 1 -maxdepth 1 -type d | fzf)
+                selected=$(find ~/temp ~/.config -mindepth 1 -maxdepth 1 -type d | fzf)
+            fi
 
-if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
-    tmux new-session -s $selected_name -c $selected
-    exit 0
-fi
+            if [[ -z $selected ]]; then
+                exit 0
+            fi
 
-if ! tmux has-session -t=$selected_name 2> /dev/null; then
-    tmux new-session -ds $selected_name -c $selected
-fi
+            selected_name=$(basename "$selected" | tr . _)
+            tmux_running=$(pgrep tmux)
 
-tmux switch-client -t $selected_name
+            if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
+                tmux new-session -s $selected_name -c $selected
+                exit 0
+            fi
+
+            if ! tmux has-session -t=$selected_name 2> /dev/null; then
+                tmux new-session -ds $selected_name -c $selected
+            fi
+
+            tmux switch-client -t $selected_name
+            ;;
+
+        completion)
+            cat << 'EOF'
+# Bash completion function for tmux-sessionizer
+_tmux_sessionizer_completions() {
+    local cur prev opts
+    # Retrieve current word and previous word
+    cur="${COMP_WORDS[COMP_CWORD]}"
+    prev="${COMP_WORDS[COMP_CWORD-1]}"
+
+    # Define the possible commands for tmux-sessionizer
+    opts="switch create"
+
+    # Complete the first argument (the command)
+    if [[ ${COMP_CWORD} -eq 1 ]]; then
+        COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
+        return 0
+    fi
+
+    case "${prev}" in
+        # If the previous argument is 'create', suggest directories
+        create)
+            local dir_opts=$(find ~/temp ~/.config -mindepth 1 -maxdepth 1 -type d 2>/dev/null)
+            COMPREPLY=($(compgen -W "${dir_opts}" -- "${cur}"))
+            return 0
+            ;;
+    esac
+
+    return 0
+}
+
+# Register the completion function for tmux-sessionizer command
+complete -F _tmux_sessionizer_completions tmux-sessionizer
+EOF
+            ;;
+
+        *)
+            echo "Usage: $0 {switch|create|completion}"
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"
