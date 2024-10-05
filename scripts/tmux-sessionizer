@@ -81,7 +81,7 @@ _tmux_sessionizer_completions() {
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
     # Define the possible commands for tmux-sessionizer
-    opts="switch create completion"
+    opts="switch create delete completion"
 
     # Complete the first argument (the command)
     if [[ ${COMP_CWORD} -eq 1 ]]; then
