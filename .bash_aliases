@@ -8,15 +8,15 @@ alias kctx="kubectx"
 
 alias lslinode="curl -s https://api.linode.com/v4/linode/types | jq '.data[] | {id: .id, label: .label, memory: .memory, disk: .disk, price_hourly: .price.hourly, price_monthly: .price.monthly}'"
 
-alias tls='tmux ls'
-alias ta='tmux attach -t'
-alias trn='tmux rename-session -t'
-alias ts='tmux-sessionizer'
+alias tmls='tmux ls'
+alias tma='tmux attach -t'
+alias tmrn='tmux rename-session -t'
+alias tms='tmux-sessionizer'
 
 alias vim-be-good='docker run -it --rm brandoncc/vim-be-good:latest'
 
  #################################
- #  _ S E C O N D _ B R A I N _  #
+ #   S E C O N D   B R A I N     #
  #################################
 
 alias sb='cd ~/second_brain/'

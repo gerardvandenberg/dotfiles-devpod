@@ -14,7 +14,7 @@ source <(tkn completion bash)
 source <(kubectl completion bash)
 complete -o default -F __start_kubectl k
 source <(tmux-sessionizer completion)
-complete -F _tmux_sessionizer_completions ts
+complete -F _tmux_sessionizer_completions tms
 
 git_prompt() {
     local format_string="$1"
