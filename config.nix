@@ -9,6 +9,7 @@
         nodejs_22
         micromamba
         fd
+        direnv
         ripgrep
         lazygit
         kubectl

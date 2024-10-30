@@ -1,11 +1,12 @@
-set -o vi
-export EDITOR=nvim
-export VISUAL=nvim
-
 if [ -f ~/.bash_aliases ]; then
     . ~/.bash_aliases
 fi
 
+set -o vi
+export EDITOR=nvim
+export VISUAL=nvim
+
+export XDG_CONFIG_HOME="$HOME"/.config
 export FZF_DEFAULT_OPTS="--height 40% --layout=reverse --border --inline-info"
 
 source "$XDG_CONFIG_HOME"/tmux-completion
