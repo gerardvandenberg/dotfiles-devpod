@@ -1,109 +1,98 @@
 #!/usr/bin/env bash
 
+switch-tmux-session() {
+    tmux_running=$(pgrep tmux)
+    if [[ -z $tmux_running ]]; then
+        exit 0
+    fi
+    if [ -n "$TMUX" ]; then
+      # Inside tmux session, switch client
+      tmux switch-client -t $(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="select sessionizer: ")
+    else
+      # Outside tmux session, attach to session
+      tmux attach-session -t $(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="select sessionizer: ")
+    fi
+}
+
+create-new-tmux-session() {
+    if [[ $# -eq 1 ]]; then
+        selected=$1
+    else
+        # selected=$(find ~/work/builds ~/projects ~/ ~/work ~/personal ~/personal/yt -mindepth 1 -maxdepth 1 -type d | fzf)
+        selected=$(find ~/temp ~/.config -mindepth 1 -maxdepth 1 -type d | fzf)
+    fi
+    if [[ -z $selected ]]; then
+        exit 0
+    fi
+    selected_name=$(basename "$selected" | tr . _)
+    tmux_running=$(pgrep tmux)
+    if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
+        tmux new-session -s $selected_name -c $selected
+        exit 0
+    fi
+    if ! tmux has-session -t=$selected_name 2> /dev/null; then
+        tmux new-session -ds $selected_name -c $selected
+    fi
+    tmux switch-client -t $selected_name
+}
+
+delete-tmux-session() {
+    tmux_running=$(pgrep tmux)
+    if [[ -z $tmux_running ]]; then
+        exit 0
+    fi
+    selected_session=$(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="Select session to delete: ")
+    if [[ -z $selected_session ]]; then
+        exit 0
+    fi
+    read -p "Are you sure you want to delete the session '$selected_session'? [y/N]: " confirm
+    if [[ $confirm == [yY] ]]; then
+        tmux kill-session -t "$selected_session"
+    fi
+}
+
+completion() {
+    cat << 'EOF'
+    ####################################################
+    #  Bash completion function for tmux-sessionizer   #
+    # ~/.bashrc: source <(tmux-sessionizer completion) #
+    ####################################################
+    _tmux_sessionizer_completions() {
+        local cur prev opts
+        # Retrieve current word and previous word
+        cur="${COMP_WORDS[COMP_CWORD]}"
+        prev="${COMP_WORDS[COMP_CWORD-1]}"
+        # Define the possible commands for tmux-sessionizer
+        opts="switch create delete completion"
+        # Complete the first argument (the command)
+        if [[ ${COMP_CWORD} -eq 1 ]]; then
+            COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
+            return 0
+        fi
+        return 0
+    }
+    # Register the completion function for tmux-sessionizer command
+    complete -F _tmux_sessionizer_completions tmux-sessionizer
+EOF
+}
+
 # Main script
 main() {
     local command=$1
     shift
-
     case "$command" in
         switch)
-            tmux_running=$(pgrep tmux)
-
-            if [[ -z $tmux_running ]]; then
-                exit 0
-            fi
-
-            if [ -n "$TMUX" ]; then
-              # Inside tmux session, switch client
-              tmux switch-client -t $(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="select sessionizer: ")
-            else
-              # Outside tmux session, attach to session
-              tmux attach-session -t $(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="select sessionizer: ")
-            fi
+            switch-tmux-session
             ;;
-
         create)
-            if [[ $# -eq 1 ]]; then
-                selected=$1
-            else
-                # selected=$(find ~/work/builds ~/projects ~/ ~/work ~/personal ~/personal/yt -mindepth 1 -maxdepth 1 -type d | fzf)
-                selected=$(find ~/temp ~/.config -mindepth 1 -maxdepth 1 -type d | fzf)
-            fi
-
-            if [[ -z $selected ]]; then
-                exit 0
-            fi
-
-            selected_name=$(basename "$selected" | tr . _)
-            tmux_running=$(pgrep tmux)
-
-            if [[ -z $TMUX ]] && [[ -z $tmux_running ]]; then
-                tmux new-session -s $selected_name -c $selected \; \
-                    split-window -v -l 10 \; \
-                    select-pane -U \; \
-                    send-keys "nvim ." C-m \; \
-                    send-keys ":Telescope find_files" C-m
-                exit 0
-            fi
-
-            if ! tmux has-session -t=$selected_name 2> /dev/null; then
-                tmux new-session -ds $selected_name -c $selected \; \
-                    split-window -v -l 10 \; \
-                    select-pane -U \; \
-                    send-keys "nvim ." C-m \; \
-                    send-keys ":Telescope find_files" C-m
-            fi
-
-            tmux switch-client -t $selected_name
+            create-new-tmux-session
             ;;
-
         delete)
-            tmux_running=$(pgrep tmux)
-
-            if [[ -z $tmux_running ]]; then
-                exit 0
-            fi
-
-            selected_session=$(tmux ls | awk '{print $1}' | sed 's/://' | fzf --prompt="Select session to delete: ")
-
-            if [[ -z $selected_session ]]; then
-                exit 0
-            fi
-
-            read -p "Are you sure you want to delete the session '$selected_session'? [y/N]: " confirm
-            if [[ $confirm == [yY] ]]; then
-                tmux kill-session -t "$selected_session"
-            fi
+            delete-tmux-session
             ;;
-
         completion)
-            cat << 'EOF'
-####################################################
-#  Bash completion function for tmux-sessionizer   #
-# ~/.bashrc: source <(tmux-sessionizer completion) #
-####################################################
-_tmux_sessionizer_completions() {
-    local cur prev opts
-    # Retrieve current word and previous word
-    cur="${COMP_WORDS[COMP_CWORD]}"
-    prev="${COMP_WORDS[COMP_CWORD-1]}"
-
-    # Define the possible commands for tmux-sessionizer
-    opts="switch create delete completion"
-
-    # Complete the first argument (the command)
-    if [[ ${COMP_CWORD} -eq 1 ]]; then
-        COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
-        return 0
-    fi
-
-    return 0
-}
-# Register the completion function for tmux-sessionizer command
-complete -F _tmux_sessionizer_completions tmux-sessionizer
-EOF
+            completion
             ;;
-
         *)
             echo "Usage: $0 {switch|create|delete|completion}"
             exit 1
