@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+export FZF_DEFAULT_OPTS="--height 100% --layout=reverse --border --inline-info"
+
 switch-tmux-session() {
     tmux_running=$(pgrep tmux)
     if [[ -z $tmux_running ]]; then
