@@ -1,6 +1,7 @@
 {
   packageOverrides = pkgs: with pkgs; {
     myPackages = pkgs.buildEnv {
+      allowUnfree = true;
       name = "rancher-workflow";
       paths = [
         zsh-completions
