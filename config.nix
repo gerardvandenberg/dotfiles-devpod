@@ -1,7 +1,7 @@
 {
   packageOverrides = pkgs: with pkgs; {
     myPackages = pkgs.buildEnv {
-      name = "mischa-tools";
+      name = "rancher-workflow";
       paths = [
         zsh-completions
         neovim
@@ -11,11 +11,16 @@
         fd
         ripgrep
         fzf
+        helm
         lazygit
         kubectl
         kubectx
         k9s
-        fluxcd
+        velero
+        pluto
+        vault
+        argo
+        rancher
       ];
     };
   };
