@@ -18,10 +18,6 @@
         helm
         # Other tools
         lazygit
-        # Use pre-built vault instead of building from source
-        (pkgs.vault.override { 
-          usePrebuiltBinaries = true;
-        })
       ];
     };
   };
