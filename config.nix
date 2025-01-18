@@ -1,27 +1,26 @@
 {
+  allowUnfree = true;
   packageOverrides = pkgs: with pkgs; {
     myPackages = pkgs.buildEnv {
-      allowUnfree = true;
       name = "rancher-workflow";
       paths = [
+        # Basic development tools
         zsh-completions
         neovim
         go
-        nodejs_22
-        pure-prompt
-        fd
-        ripgrep
+        nodejs_20
         fzf
-        helm
-        lazygit
+        ripgrep
+
+        # Kubernetes tools
         kubectl
         kubectx
         k9s
-        velero
-        pluto
+        helm
+
+        # Other tools
+        lazygit
         vault
-        argo
-        rancher
       ];
     };
   };
