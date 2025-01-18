@@ -1,62 +1,151 @@
 #!/bin/bash
 
+# Exit on error
+set -e
+
+# Function to handle errors
+error_handler() {
+  echo "Error occurred in script at line: $1"
+  exit 1
+}
+
+trap 'error_handler ${LINENO}' ERR
+
+# Function to download tools with error handling and progress display
+download_tool() {
+  local url="$1"
+  local output="$2"
+  local tool_name="$3"
+
+  echo "Downloading ${tool_name}..."
+  if curl -fsSL --progress-bar "$url" -o "$output"; then
+    echo "${tool_name} downloaded successfully"
+  else
+    echo "Failed to download ${tool_name}"
+    return 1
+  fi
+}
+
+# Function to create directories
+create_dirs() {
+  local dirs=(
+    "$XDG_CONFIG_HOME"
+    "$XDG_CONFIG_HOME/nixpkgs"
+    "$HOME/.zsh"
+    "$HOME/.local/bin"
+    "$HOME/.zfunc"
+  )
+
+  for dir in "${dirs[@]}"; do
+    mkdir -p "$dir"
+  done
+}
+
+# Function to create symlinks
+create_symlinks() {
+  local links=(
+    "$PWD/nvim:$XDG_CONFIG_HOME/nvim"
+    "$PWD/.inputrc:$HOME/.inputrc"
+    "$PWD/.tmux.conf:$HOME/.tmux.conf"
+    "$PWD/config.nix:$XDG_CONFIG_HOME/nixpkgs/config.nix"
+  )
+
+  for link in "${links[@]}"; do
+    local source="${link%:*}"
+    local target="${link#*:}"
+    ln -sf "$source" "$target"
+  done
+}
+
 # Set up XDG_CONFIG_HOME
-export XDG_CONFIG_HOME="$HOME"/.config
-mkdir -p "$XDG_CONFIG_HOME"
-mkdir -p "$XDG_CONFIG_HOME"/nixpkgs
+export XDG_CONFIG_HOME="$HOME/.config"
+
+# Create necessary directories
+create_dirs
 
 # Create symlinks for existing configurations
-ln -sf "$PWD/nvim" "$XDG_CONFIG_HOME"/nvim
-ln -sf "$PWD/.inputrc" "$HOME"/.inputrc
-ln -sf "$PWD/.tmux.conf" "$HOME"/.tmux.conf
-ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME"/nixpkgs/config.nix
+create_symlinks
 
-# Fetch and set up Zsh configuration files from my main dotfiles repo
+# Update channels and install packages
+echo "Updating Nix channels and installing packages..."
+nix-channel --update
+nix-env -iA nixpkgs.myPackages
 
-# curl -o "$HOME/.zshrc" https://raw.githubusercontent.com/mischavandenburg/dotfiles/main/.zshrc
-# curl -o "$HOME/.zprofile" https://raw.githubusercontent.com/mischavandenburg/dotfiles/main/.zprofile
+# Install Pure prompt
+echo "Installing Pure prompt..."
+git clone --quiet https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" 2>/dev/null || true
 
-# Install Nix packages from config.nix
- nix-env -iA nixpkgs.myPackages
+# Installing Krew and plugins
+echo "Installing Krew and plugins..."
+(
+  set -x
+  cd "$(mktemp -d)" &&
+    OS="$(uname | tr '[:upper:]' '[:lower:]')" &&
+    ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')" &&
+    KREW="krew-${OS}_${ARCH}" &&
+    curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz" &&
+    tar zxvf "${KREW}.tar.gz" &&
+    ./"${KREW}" install krew &&
+    export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH" &&
+    kubectl krew install neat &&
+    kubectl krew install images
+)
 
-# Nix is broken due to timeouts, falling back to brew
-#packages=(
-#  fd
-#  ripgrep
-#  npm
-#  lazygit
-#  fzf
-#  kubectl
-#  fluxcd/tap/flux
-#  k9s
-#  kubectx
-#  direnv
-#)
+# Install Velero
+echo "Installing Velero..."
+VELERO_VERSION=$(curl -s https://api.github.com/repos/vmware-tanzu/velero/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
+download_tool \
+  "https://github.com/vmware-tanzu/velero/releases/download/${VELERO_VERSION}/velero-${VELERO_VERSION}-linux-arm64.tar.gz" \
+  "velero.tar.gz" \
+  "Velero"
+tar xzf velero.tar.gz
+mv velero-*/velero "$HOME/.local/bin/velero"
+rm -rf velero-* velero.tar.gz
 
-# Iterate over the array and install each package
-#for package in "${packages[@]}"; do
-#  echo "Installing $package..."
-#  /home/linuxbrew/.linuxbrew/bin/brew install "$package"
-#done
+# Install Pluto
+echo "Installing Pluto..."
+PLUTO_VERSION=$(curl -s https://api.github.com/repos/FairwindsOps/pluto/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
+download_tool \
+  "https://github.com/FairwindsOps/pluto/releases/download/${PLUTO_VERSION}/pluto_${PLUTO_VERSION#v}_linux_arm64.tar.gz" \
+  "pluto.tar.gz" \
+  "Pluto"
+tar xzf pluto.tar.gz
+mv pluto "$HOME/.local/bin/pluto"
+rm pluto.tar.gz
 
-# echo "All packages have been installed."
+# Install ArgoCD CLI
+echo "Installing ArgoCD CLI..."
+ARGO_VERSION=$(curl -s https://api.github.com/repos/argoproj/argo-cd/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
+download_tool \
+  "https://github.com/argoproj/argo-cd/releases/download/${ARGO_VERSION}/argocd-linux-arm64" \
+  "$HOME/.local/bin/argocd" \
+  "ArgoCD CLI"
+chmod +x "$HOME/.local/bin/argocd"
 
-# Set up pure prompt
+# Build Rancher CLI from source
+echo "Building Rancher CLI from source..."
+RANCHER_VERSION="v2.10.0"
+TEMP_DIR=$(mktemp -d)
+cd "$TEMP_DIR" || exit 1
 
-mkdir -p "$HOME/.zsh"
-git clone https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
+# Download source code
+curl -L -o rancher-cli.tar.gz "https://github.com/rancher/cli/archive/refs/tags/${RANCHER_VERSION}.tar.gz"
+tar xzf rancher-cli.tar.gz
+cd "cli-${RANCHER_VERSION#v}" || exit 1
+
+# Build the binary
+GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${RANCHER_VERSION}" -o rancher
+mv rancher "$HOME/.local/bin/rancher"
+
+# Cleanup
+cd "$HOME" || exit 1
+rm -rf "$TEMP_DIR"
 
 # Silence source warning
-
 touch "$HOME/.privaterc"
 
 # Set up completions
+kubectl completion zsh >"$HOME/.zfunc/_kubectl"
+helm completion zsh >"$HOME/.zfunc/_helm"
 
-midir -p "$HOME/.zfunc
-# flux completion zsh > $HOME/.zfunc/_flux
-kubectl completion zsh > $HOME/.zfunc/_kubectl
-helm completion zsh > $HOME/.zfunc/_helm
-
-echo "Setup complete. Zsh configuration files have been downloaded and set up."
-
-
+echo "Setup complete!"
