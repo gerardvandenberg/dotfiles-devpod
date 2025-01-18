@@ -57,7 +57,7 @@ create_symlinks() {
     links+=("$PWD/.tmux.conf:$HOME/.tmux.conf")
   fi
 
-  for link in "${links[@]}"; do
+  for link in "${dirs[@]}"; do
     local source="${link%:*}"
     local target="${link#*:}"
     if [[ -e "$source" ]]; then
@@ -66,6 +66,22 @@ create_symlinks() {
     else
       echo "Warning: Source file $source does not exist, skipping symlink creation"
     fi
+  done
+}
+
+# Function to wait for command to be available
+wait_for_command() {
+  local cmd="$1"
+  local timeout="${2:-60}"  # Default 60 seconds timeout
+  local start_time=$(date +%s)
+
+  while ! command -v "$cmd" >/dev/null 2>&1; do
+    local current_time=$(date +%s)
+    if (( current_time - start_time >= timeout )); then
+      echo "Timeout waiting for $cmd to become available"
+      return 1
+    fi
+    sleep 1
   done
 }
 
@@ -83,59 +99,73 @@ echo "Updating Nix channels and installing packages..."
 nix-channel --update
 nix-env -iA nixpkgs.myPackages
 
+# Wait for kubectl to be available
+wait_for_command kubectl
+
 # Install Pure prompt
 echo "Installing Pure prompt..."
 git clone --quiet https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" 2>/dev/null || true
 
-# Installing Krew and plugins
+# Install Krew and plugins
 echo "Installing Krew and plugins..."
 (
-  cd "$(mktemp -d)" &&
-    OS="$(uname | tr '[:upper:]' '[:lower:]')" &&
-    ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')" &&
-    KREW="krew-${OS}_${ARCH}" &&
-    curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz" &&
-    tar zxvf "${KREW}.tar.gz" &&
-    ./"${KREW}" install krew &&
-    export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH" &&
-    kubectl krew install neat &&
-    kubectl krew install image
-)
+  cd "$(mktemp -d)" || exit 1
+  
+  OS="$(uname | tr '[:upper:]' '[:lower:]')"
+  ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')"
+  KREW="krew-${OS}_${ARCH}"
+  
+  curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz"
+  tar zxvf "${KREW}.tar.gz"
+  ./"${KREW}" install krew
+  
+  # Add Krew to PATH for current session
+  export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+  
+  # Add to shell rc files for persistence
+  echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$HOME/.bashrc"
+  echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$HOME/.zshrc"
+  
+  # Install plugins
+  kubectl krew install neat
+  kubectl krew install images
+) || echo "Krew installation failed, continuing..."
 
 # Install Velero
 echo "Installing Velero..."
-VELERO_VERSION=$(curl -s https://api.github.com/repos/vmware-tanzu/velero/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
-download_tool \
-  "https://github.com/vmware-tanzu/velero/releases/download/${VELERO_VERSION}/velero-${VELERO_VERSION}-linux-arm64.tar.gz" \
-  "velero.tar.gz" \
-  "Velero"
-tar xzf velero.tar.gz
-mv velero-*/velero "$HOME/.local/bin/velero"
-rm -rf velero-* velero.tar.gz
+if VELERO_VERSION=$(curl -s https://api.github.com/repos/vmware-tanzu/velero/releases/latest | grep 'tag_name' | cut -d '"' -f 4); then
+  download_tool \
+    "https://github.com/vmware-tanzu/velero/releases/download/${VELERO_VERSION}/velero-${VELERO_VERSION}-linux-arm64.tar.gz" \
+    "velero.tar.gz" \
+    "Velero"
+  tar xzf velero.tar.gz
+  mv velero-*/velero "$HOME/.local/bin/velero"
+  rm -rf velero-* velero.tar.gz
+fi
 
 # Install Pluto
 echo "Installing Pluto..."
-PLUTO_VERSION=$(curl -s https://api.github.com/repos/FairwindsOps/pluto/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
-download_tool \
-  "https://github.com/FairwindsOps/pluto/releases/download/${PLUTO_VERSION}/pluto_${PLUTO_VERSION#v}_linux_arm64.tar.gz" \
-  "pluto.tar.gz" \
-  "Pluto"
-tar xzf pluto.tar.gz
-mv pluto "$HOME/.local/bin/pluto"
-rm pluto.tar.gz
+if PLUTO_VERSION=$(curl -s https://api.github.com/repos/FairwindsOps/pluto/releases/latest | grep 'tag_name' | cut -d '"' -f 4); then
+  download_tool \
+    "https://github.com/FairwindsOps/pluto/releases/download/${PLUTO_VERSION}/pluto_${PLUTO_VERSION#v}_linux_arm64.tar.gz" \
+    "pluto.tar.gz" \
+    "Pluto"
+  tar xzf pluto.tar.gz
+  mv pluto "$HOME/.local/bin/pluto"
+  rm pluto.tar.gz
+fi
 
 # Install ArgoCD CLI
 echo "Installing ArgoCD CLI..."
-unset DIPSPLAY
-export NO_AT_BRIDGE
-ARGO_VERSION=$(curl -s https://api.github.com/repos/argoproj/argo-cd/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
-download_tool \
-  "https://github.com/argoproj/argo-cd/releases/download/${ARGO_VERSION}/argocd-linux-arm64" \
-  "$HOME/.local/bin/argocd" \
-  "ArgoCD CLI"
-chmod +x "$HOME/.local/bin/argocd"
+if ARGO_VERSION=$(curl -s https://api.github.com/repos/argoproj/argo-cd/releases/latest | grep 'tag_name' | cut -d '"' -f 4); then
+  download_tool \
+    "https://github.com/argoproj/argo-cd/releases/download/${ARGO_VERSION}/argocd-linux-arm64" \
+    "$HOME/.local/bin/argocd" \
+    "ArgoCD CLI"
+  chmod +x "$HOME/.local/bin/argocd"
+fi
 
-# Build Rancher CLI from source
+# Build Rancher CLI
 echo "Building Rancher CLI from source..."
 RANCHER_VERSION="v2.10.0"
 TEMP_DIR=$(mktemp -d)
@@ -147,7 +177,8 @@ tar xzf rancher-cli.tar.gz
 cd "cli-${RANCHER_VERSION#v}" || exit 1
 
 # Build the binary without X server dependency
-DISPLAY="" GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${RANCHER_VERSION}" -o rancher
+DISPLAY="" GOOS=linux GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 \
+  go build -ldflags "-X main.VERSION=${RANCHER_VERSION}" -o rancher
 mv rancher "$HOME/.local/bin/rancher"
 
 # Cleanup
@@ -158,9 +189,8 @@ rm -rf "$TEMP_DIR"
 touch "$HOME/.privaterc"
 
 # Set up completions
-unset DIPSPLAY
-export NO_AT_BRIDGE
-kubectl completion zsh >"$HOME/.zfunc/_kubectl"
-helm completion zsh >"$HOME/.zfunc/_helm"
+mkdir -p "$HOME/.zfunc"
+kubectl completion zsh > "$HOME/.zfunc/_kubectl"
+helm completion zsh > "$HOME/.zfunc/_helm"
 
-echo "Setup complete!"
+echo "Setup completed successfully!"
