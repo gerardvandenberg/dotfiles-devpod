@@ -100,7 +100,7 @@ echo "Installing Krew and plugins..."
     ./"${KREW}" install krew &&
     export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH" &&
     kubectl krew install neat &&
-    kubectl krew install images
+    kubectl krew install image
 )
 
 # Install Velero
