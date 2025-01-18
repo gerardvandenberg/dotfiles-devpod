@@ -45,15 +45,27 @@ create_dirs() {
 create_symlinks() {
   local links=(
     "$PWD/nvim:$XDG_CONFIG_HOME/nvim"
-    "$PWD/.inputrc:$HOME/.inputrc"
-    "$PWD/.tmux.conf:$HOME/.tmux.conf"
     "$PWD/config.nix:$XDG_CONFIG_HOME/nixpkgs/config.nix"
   )
+  
+  # Optional configs - only create symlinks if files exist
+  if [[ -f "$PWD/.inputrc" ]]; then
+    links+=("$PWD/.inputrc:$HOME/.inputrc")
+  fi
+  
+  if [[ -f "$PWD/.tmux.conf" ]]; then
+    links+=("$PWD/.tmux.conf:$HOME/.tmux.conf")
+  fi
 
   for link in "${links[@]}"; do
     local source="${link%:*}"
     local target="${link#*:}"
-    ln -sf "$source" "$target"
+    if [[ -e "$source" ]]; then
+      ln -sf "$source" "$target"
+      echo "Created symlink: $target -> $source"
+    else
+      echo "Warning: Source file $source does not exist, skipping symlink creation"
+    fi
   done
 }
 
