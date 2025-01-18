@@ -158,6 +158,8 @@ rm -rf "$TEMP_DIR"
 touch "$HOME/.privaterc"
 
 # Set up completions
+unset DIPSPLAY
+export NO_AT_BRIDGE
 kubectl completion zsh >"$HOME/.zfunc/_kubectl"
 helm completion zsh >"$HOME/.zfunc/_helm"
 
