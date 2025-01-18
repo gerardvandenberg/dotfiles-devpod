@@ -11,16 +11,17 @@
         nodejs_20
         fzf
         ripgrep
-
         # Kubernetes tools
         kubectl
         kubectx
         k9s
         helm
-
         # Other tools
         lazygit
-        vault
+        # Use pre-built vault instead of building from source
+        (pkgs.vault.override { 
+          usePrebuiltBinaries = true;
+        })
       ];
     };
   };
