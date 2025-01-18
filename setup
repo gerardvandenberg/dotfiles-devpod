@@ -126,7 +126,7 @@ rm pluto.tar.gz
 
 # Install ArgoCD CLI
 echo "Installing ArgoCD CLI..."
-uset DIPSPLAY
+unset DIPSPLAY
 export NO_AT_BRIDGE
 ARGO_VERSION=$(curl -s https://api.github.com/repos/argoproj/argo-cd/releases/latest | grep 'tag_name' | cut -d '"' -f 4)
 download_tool \
