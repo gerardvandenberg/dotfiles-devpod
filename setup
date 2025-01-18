@@ -146,8 +146,8 @@ curl -L -o rancher-cli.tar.gz "https://github.com/rancher/cli/archive/refs/tags/
 tar xzf rancher-cli.tar.gz
 cd "cli-${RANCHER_VERSION#v}" || exit 1
 
-# Build the binary
-GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${RANCHER_VERSION}" -o rancher
+# Build the binary without X server dependency
+DISPLAY="" GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${RANCHER_VERSION}" -o rancher
 mv rancher "$HOME/.local/bin/rancher"
 
 # Cleanup
