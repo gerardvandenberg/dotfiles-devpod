@@ -11,6 +11,29 @@ error_handler() {
 
 trap 'error_handler ${LINENO}' ERR
 
+# Function to wait for commands to be available
+wait_for_commands() {
+  local timeout=120  # 2 minutes timeout
+  local interval=2   # Check every 2 seconds
+  local commands=("$@")
+  
+  echo "Waiting for commands to be available: ${commands[*]}"
+  
+  for cmd in "${commands[@]}"; do
+    local waited=0
+    while ! command -v "$cmd" >/dev/null 2>&1; do
+      if [ $waited -ge $timeout ]; then
+        echo "Timeout waiting for $cmd to become available"
+        return 1
+      fi
+      echo "Waiting for $cmd to become available... ($waited seconds)"
+      sleep $interval
+      waited=$((waited + interval))
+    done
+    echo "$cmd is now available"
+  done
+}
+
 # Function to setup Nix channels and configuration
 setup_nix() {
   echo "Setting up Nix environment..."
@@ -114,8 +137,11 @@ install_krew() {
     ARCH="$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')"
     KREW="krew-${OS}_${ARCH}"
     
+    echo "Downloading Krew..."
     curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz"
     tar zxvf "${KREW}.tar.gz"
+    
+    echo "Installing Krew..."
     ./"${KREW}" install krew
     
     # Add Krew to PATH for current session
@@ -125,13 +151,9 @@ install_krew() {
     echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$HOME/.bashrc"
     [[ -f "$HOME/.zshrc" ]] && echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$HOME/.zshrc"
     
-    # Install plugins (only if kubectl is available)
-    if command -v kubectl >/dev/null 2>&1; then
-      kubectl krew install neat
-      kubectl krew install images
-    else
-      echo "Warning: kubectl not found, skipping krew plugin installation"
-    fi
+    echo "Installing Krew plugins..."
+    kubectl krew install neat
+    kubectl krew install images
   ) || echo "Warning: Krew installation failed"
 }
 
@@ -140,22 +162,28 @@ setup_completions() {
   echo "Setting up shell completions..."
   mkdir -p "$HOME/.zfunc"
   
-  if command -v kubectl >/dev/null 2>&1; then
-    kubectl completion zsh > "$HOME/.zfunc/_kubectl"
-  fi
-  
-  if command -v helm >/dev/null 2>&1; then
-    helm completion zsh > "$HOME/.zfunc/_helm"
-  fi
+  kubectl completion zsh > "$HOME/.zfunc/_kubectl"
+  helm completion zsh > "$HOME/.zfunc/_helm"
 }
 
 # Main execution
 main() {
   echo "Starting setup..."
   
+  # Wait for Nix to finish setting up
+  echo "Waiting for initial Nix setup..."
+  sleep 5
+  
   create_dirs
   setup_nix
   install_nix_packages
+  
+  echo "Waiting for required tools to be available..."
+  wait_for_commands kubectl helm || {
+    echo "Failed to detect required tools. Please check your Nix configuration."
+    exit 1
+  }
+  
   create_symlinks
   install_pure_prompt
   install_krew
