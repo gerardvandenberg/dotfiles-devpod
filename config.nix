@@ -18,6 +18,7 @@
         helm
         # Other tools
         lazygit
+        gost
       ];
     };
   };
