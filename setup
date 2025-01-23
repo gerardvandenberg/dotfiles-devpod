@@ -152,6 +152,10 @@ main() {
   setup_completions
   
   touch "$HOME/.privaterc"
+  
+  # Exit successfully
+  echo "Setup completed successfully"
+  exit 0
 }
 
 main "$@"
