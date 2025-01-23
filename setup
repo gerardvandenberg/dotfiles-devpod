@@ -38,9 +38,10 @@ install_nix_packages() {
   export TERM=dumb
 
   # Install packages
-  nix-env -iA nixpkgs.myPackages || {
+  # Using the full attribute path for helm to ensure we get the correct package
+  nix-env -iA nixpkgs.kubernetes-helm nixpkgs.kubectl || {
     nix-channel --update
-    nix-env -iA nixpkgs.myPackages
+    nix-env -iA nixpkgs.kubernetes-helm nixpkgs.kubectl
   }
 
   # Add Nix profile to PATH
