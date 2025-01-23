@@ -10,40 +10,22 @@ error_handler() {
 trap 'error_handler ${LINENO}' ERR
 
 verify_commands() {
-  local max_attempts=5
+  local max_attempts=3
   local commands=("$@")
   
-  for cmd in "${commands[@]}"; do
-    for ((i=1; i<=max_attempts; i++)); do
-      if command -v "$cmd" >/dev/null 2>&1; then
-        echo "$cmd is available"
-        break
-      fi
-      if [ $i -eq $max_attempts ]; then
-        echo "Command $cmd not found after $max_attempts attempts"
-        return 1
-      fi
-      echo "Attempt $i/$max_attempts: $cmd not found, retrying in 5s..."
-      sleep 5
-    done
-  done
+  echo "Verifying commands: ${commands[*]}"
+  which "${commands[@]}" 2>/dev/null || return 1
 }
 
 setup_nix() {
-  echo "Setting up Nix environment..."
-  
   if ! nix-channel --list | grep -q "^nixpkgs "; then
-    echo "Adding nixpkgs channel..."
     nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
   fi
   
-  echo "Updating Nix channels..."
   nix-channel --update
-  
   mkdir -p "$HOME/.config/nixpkgs"
   
   if [[ -f "$PWD/config.nix" ]]; then
-    echo "Linking Nix configuration..."
     ln -sf "$PWD/config.nix" "$HOME/.config/nixpkgs/config.nix"
   else
     echo "Error: config.nix not found"
@@ -52,18 +34,22 @@ setup_nix() {
 }
 
 install_nix_packages() {
-  echo "Installing Nix packages..."
   export NIXPKGS_ALLOW_UNFREE=1
   export TERM=dumb
-  export DISPLAY=dummy:0
-  if ! nix-env -iA nixpkgs.myPackages; then
-    echo "Retrying package installation after channel update..."
+
+  nix-env -iA nixpkgs.myPackages || {
     nix-channel --update
-    if ! nix-env -iA nixpkgs.myPackages; then
-      echo "Package installation failed"
-      exit 1
-    fi
-  fi
+    nix-env -iA nixpkgs.myPackages
+  }
+
+  # Wait for environment to update
+  sleep 2
+  
+  # Verify required tools
+  verify_commands kubectl helm || {
+    echo "Required tools not found after installation"
+    exit 1
+  }
 }
 
 create_dirs() {
@@ -75,14 +61,12 @@ create_dirs() {
     "$HOME/.zfunc"
   )
 
-  echo "Creating directories..."
   for dir in "${dirs[@]}"; do
     mkdir -p "$dir"
   done
 }
 
 create_symlinks() {
-  echo "Creating symlinks..."
   local links=(
     "$PWD/nvim:$HOME/.config/nvim"
     "$PWD/config.nix:$HOME/.config/nixpkgs/config.nix"
@@ -96,26 +80,17 @@ create_symlinks() {
     local target="${link#*:}"
     if [[ -e "$source" ]]; then
       ln -sf "$source" "$target"
-      echo "Created symlink: $target -> $source"
-    else
-      echo "Warning: Source $source not found, skipping"
     fi
   done
 }
 
 install_pure_prompt() {
-  echo "Installing Pure prompt..."
   if [[ ! -d "$HOME/.zsh/pure" ]]; then
-    # Use --no-interactive to prevent GUI prompts
-    GIT_TERMINAL_PROMPT=0 git clone --quiet --no-interactive https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" || {
-      echo "Warning: Pure prompt installation failed"
-      return 1
-    }
+    GIT_TERMINAL_PROMPT=0 git clone --quiet --no-interactive https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" || return 1
   fi
 }
 
 install_krew() {
-  echo "Installing Krew..."
   (
     cd "$(mktemp -d)" || exit 1
     
@@ -126,7 +101,6 @@ install_krew() {
     curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz"
     tar zxvf "${KREW}.tar.gz"
     
-    # Force non-interactive installation
     KREW_NO_UPGRADE_CHECK=1 ./"${KREW}" install krew
     
     export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
@@ -140,35 +114,21 @@ install_krew() {
 }
 
 setup_completions() {
-  echo "Setting up completions..."
   mkdir -p "$HOME/.zfunc"
-  
   kubectl completion zsh > "$HOME/.zfunc/_kubectl"
   helm completion zsh > "$HOME/.zfunc/_helm"
 }
 
 main() {
-  echo "Starting DevPod setup..."
-  
-  sleep 5
-  
   create_dirs
   setup_nix
   install_nix_packages
-  
-  verify_commands kubectl helm || {
-    echo "Required tools not available"
-    exit 1
-  }
-  
   create_symlinks
   install_pure_prompt
   install_krew
   setup_completions
   
   touch "$HOME/.privaterc"
-  
-  echo "Setup completed successfully!"
 }
 
 main "$@"
