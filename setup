@@ -9,25 +9,23 @@ error_handler() {
 
 trap 'error_handler ${LINENO}' ERR
 
-wait_for_commands() {
-  local timeout=120
-  local interval=2
+verify_commands() {
+  local max_attempts=5
   local commands=("$@")
   
-  echo "Waiting for commands to be available: ${commands[*]}"
-  
   for cmd in "${commands[@]}"; do
-    local waited=0
-    while ! command -v "$cmd" >/dev/null 2>&1; do
-      if [ $waited -ge $timeout ]; then
-        echo "Timeout waiting for $cmd"
+    for ((i=1; i<=max_attempts; i++)); do
+      if command -v "$cmd" >/dev/null 2>&1; then
+        echo "$cmd is available"
+        break
+      fi
+      if [ $i -eq $max_attempts ]; then
+        echo "Command $cmd not found after $max_attempts attempts"
         return 1
       fi
-      echo "Waiting for $cmd... ($waited seconds)"
-      sleep $interval
-      waited=$((waited + interval))
+      echo "Attempt $i/$max_attempts: $cmd not found, retrying in 5s..."
+      sleep 5
     done
-    echo "$cmd is available"
   done
 }
 
@@ -158,7 +156,7 @@ main() {
   setup_nix
   install_nix_packages
   
-  wait_for_commands kubectl helm || {
+  verify_commands kubectl helm || {
     echo "Required tools not available"
     exit 1
   }
