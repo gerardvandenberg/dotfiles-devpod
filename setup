@@ -56,6 +56,7 @@ setup_nix() {
 install_nix_packages() {
   echo "Installing Nix packages..."
   export NIXPKGS_ALLOW_UNFREE=1
+  export DISPLAY=dummy:0
   if ! nix-env -iA nixpkgs.myPackages; then
     echo "Retrying package installation after channel update..."
     nix-channel --update
