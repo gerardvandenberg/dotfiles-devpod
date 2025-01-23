@@ -1,34 +1,72 @@
-# Install Nix packages with proper PATH handling
-install_nix_packages() {
-    log INFO "Installing Nix packages from config.nix"
-    
-    export NIXPKGS_ALLOW_UNFREE=1
-    export TERM=dumb
+#!/bin/bash
 
-    # Install packages with retry mechanism
-    local max_attempts=3
-    local attempt=1
-    local wait_time=5
+# This script sets up a development environment using Nix package manager and dotfiles.
+# It handles package installation, configuration linking, and shell setup.
+# The script is designed to be idempotent - running it multiple times should be safe.
 
-    while (( attempt <= max_attempts )); do
-        if nix-env -iA nixpkgs.myPackages; then
-            break
-        else
-            log WARN "Attempt $attempt failed. Retrying in $wait_time seconds..."
-            sleep $wait_time
-            (( attempt++ ))
-            (( wait_time *= 2 ))
-            
-            if (( attempt > max_attempts )); then
-                log ERROR "Failed to install Nix packages after $max_attempts attempts"
-                exit 1
-            fi
-            
-            nix-channel --update
+# Enable strict error handling and better debugging
+set -euo pipefail
+IFS=$'\n\t'
+
+# Define global constants
+readonly CONFIG_DIRS=(
+    "$HOME/.config"
+    "$HOME/.config/nixpkgs"
+    "$HOME/.zsh"
+    "$HOME/.local/bin"
+    "$HOME/.zfunc"
+)
+
+# These commands must be available after installation
+readonly REQUIRED_COMMANDS=(
+    kubectl
+    helm
+    lazygit
+)
+
+# Maximum number of retry attempts for network operations
+readonly MAX_ATTEMPTS=3
+
+# Timeout values (in seconds)
+readonly CLONE_TIMEOUT=30
+readonly INSTALL_TIMEOUT=300
+
+# Enhanced error handling with call stack tracing
+error_handler() {
+    local line_num=$1
+    local command=$2
+    echo >&2 "Error occurred in command '$command' at line $line_num"
+    local frame=0
+    while caller $frame; do
+        ((frame++))
+    done >&2
+    exit 1
+}
+
+trap 'error_handler ${LINENO} "${BASH_COMMAND}"' ERR
+
+# Structured logging function with timestamp and log level
+log() {
+    local level=$1
+    shift
+    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$level] $*"
+}
+
+# Verify command existence in PATH
+verify_commands() {
+    local cmd
+    for cmd in "$@"; do
+        if ! command -v "$cmd" >/dev/null 2>&1; then
+            log ERROR "Required command not found: $cmd"
+            return 1
         fi
     done
+    return 0
+}
 
-    # Update PATH immediately
+# Update PATH to include Nix binaries
+update_path() {
+    # Add Nix profile to PATH
     export PATH="$HOME/.nix-profile/bin:$PATH"
     
     # Source Nix profile script if available
@@ -37,7 +75,7 @@ install_nix_packages() {
         # shellcheck disable=SC1090
         source "$nix_profile_script"
     fi
-
+    
     # Update shell configuration files
     local path_export='export PATH="$HOME/.nix-profile/bin:$PATH"'
     local shell_configs=("$HOME/.bashrc")
@@ -48,14 +86,70 @@ install_nix_packages() {
             echo "$path_export" >> "$config"
         fi
     done
+}
+
+# Setup Nix channels and ensure config.nix is in place
+setup_nix() {
+    log INFO "Setting up Nix environment"
+    
+    # Only update channel if it's older than 1 day
+    if [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]]; then
+        if ! nix-channel --list | grep -q "^nixpkgs "; then
+            log INFO "Adding nixpkgs channel"
+            nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
+        fi
+        nix-channel --update
+    fi
+
+    # Ensure config directory exists
+    mkdir -p "$HOME/.config/nixpkgs"
+    
+    # Link config.nix from dotfiles to Nix config directory
+    if [[ -f "$PWD/config.nix" ]]; then
+        ln -sf "$PWD/config.nix" "$HOME/.config/nixpkgs/config.nix"
+    else
+        log ERROR "config.nix not found in current directory"
+        exit 1
+    fi
+}
+
+# Install packages defined in config.nix
+install_nix_packages() {
+    log INFO "Installing Nix packages from config.nix"
+    
+    export NIXPKGS_ALLOW_UNFREE=1
+    export TERM=dumb
+
+    local attempt=1
+    local wait_time=5
+
+    while (( attempt <= MAX_ATTEMPTS )); do
+        if timeout "$INSTALL_TIMEOUT" nix-env -iA nixpkgs.myPackages; then
+            break
+        else
+            log WARN "Attempt $attempt failed. Retrying in $wait_time seconds..."
+            sleep $wait_time
+            (( attempt++ ))
+            (( wait_time *= 2 ))
+            
+            if (( attempt > MAX_ATTEMPTS )); then
+                log ERROR "Failed to install Nix packages after $MAX_ATTEMPTS attempts"
+                exit 1
+            fi
+            
+            nix-channel --update
+        fi
+    done
+
+    # Update PATH and shell configurations
+    update_path
 
     # Give the system a moment to register the new binaries
     sleep 1
 
-    # Now verify the installation
+    # Verify installation
     verify_commands "${REQUIRED_COMMANDS[@]}" || {
         log ERROR "Critical packages not installed correctly"
-        # Instead of exiting, let's provide more diagnostic information
         log INFO "Current PATH: $PATH"
         log INFO "Contents of ~/.nix-profile/bin:"
         ls -l "$HOME/.nix-profile/bin" || true
@@ -63,39 +157,149 @@ install_nix_packages() {
     }
 }
 
-# Main execution function with corrected order
+# Create symlinks with automatic backup
+create_symlinks() {
+    log INFO "Creating symlinks for configuration files"
+    
+    local timestamp=$(date +%Y%m%d_%H%M%S)
+    local backup_dir="$HOME/.config/backups/$timestamp"
+    
+    # Define symlinks as associative array
+    declare -A links=(
+        ["$PWD/nvim"]="$HOME/.config/nvim"
+        ["$PWD/config.nix"]="$HOME/.config/nixpkgs/config.nix"
+    )
+    
+    # Add optional configuration files if they exist
+    [[ -f "$PWD/.inputrc" ]] && links["$PWD/.inputrc"]="$HOME/.inputrc"
+    [[ -f "$PWD/.tmux.conf" ]] && links["$PWD/.tmux.conf"]="$HOME/.tmux.conf"
+
+    for source in "${!links[@]}"; do
+        local target="${links[$source]}"
+        if [[ -e "$source" ]]; then
+            if [[ -e "$target" ]] && [[ ! -L "$target" ]]; then
+                mkdir -p "$backup_dir"
+                mv "$target" "$backup_dir/"
+                log INFO "Backed up $target to $backup_dir/"
+            fi
+            ln -sf "$source" "$target"
+        fi
+    done
+}
+
+# Install Pure prompt for zsh
+install_pure_prompt() {
+    log INFO "Installing Pure prompt"
+    
+    if [[ -d "$HOME/.zsh/pure" ]]; then
+        log INFO "Pure prompt already installed"
+        return 0
+    fi
+
+    export GIT_TERMINAL_PROMPT=0
+    export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
+    
+    timeout "$CLONE_TIMEOUT" git clone -q https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" || {
+        log WARN "Pure prompt installation failed or timed out"
+        return 1
+    }
+}
+
+# Install Kubernetes package manager (Krew)
+install_krew() {
+    log INFO "Installing Krew"
+    
+    if command -v kubectl-krew >/dev/null 2>&1; then
+        log INFO "Krew already installed"
+        return 0
+    fi
+
+    (
+        local temp_dir
+        temp_dir=$(mktemp -d) || exit 1
+        cd "$temp_dir" || exit 1
+        
+        trap 'rm -rf "$temp_dir"' EXIT
+        
+        local os
+        os=$(uname | tr '[:upper:]' '[:lower:]')
+        local arch
+        arch=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')
+        local krew="krew-${os}_${arch}"
+        
+        curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${krew}.tar.gz"
+        tar zxf "${krew}.tar.gz"
+        
+        export KREW_NO_UPGRADE_CHECK=1
+        ./"${krew}" install krew
+        
+        # Update PATH for Krew
+        local krew_path='export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"'
+        local shell_configs=("$HOME/.bashrc")
+        [[ -f "$HOME/.zshrc" ]] && shell_configs+=("$HOME/.zshrc")
+
+        for config in "${shell_configs[@]}"; do
+            if ! grep -q "$krew_path" "$config" 2>/dev/null; then
+                echo "$krew_path" >> "$config"
+            fi
+        done
+
+        export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+        
+        for plugin in neat image; do
+            timeout 30 kubectl krew install "$plugin" || log WARN "Failed to install Krew plugin: $plugin"
+        done
+    ) || log WARN "Krew installation failed"
+}
+
+# Setup shell completions for installed tools
+setup_completions() {
+    log INFO "Setting up shell completions"
+    
+    mkdir -p "$HOME/.zfunc"
+    local completion_dir="$HOME/.zfunc"
+    
+    for cmd in kubectl helm; do
+        if command -v "$cmd" >/dev/null 2>&1; then
+            "$cmd" completion zsh > "$completion_dir/_$cmd"
+        else
+            log WARN "Command not found for completion: $cmd"
+        fi
+    done
+}
+
+# Main execution function with proper ordering of operations
 main() {
     local start_time
     start_time=$(date +%s)
     
     log INFO "Starting development environment setup"
     
-    # Create all required directories first
+    # Create all required directories
     mkdir -p "${CONFIG_DIRS[@]}"
     
-    # Setup Nix first and wait for it
+    # Setup Nix first
     setup_nix
     
     # Install Nix packages and ensure PATH is updated
     install_nix_packages
     
-    # Only after Nix packages are properly installed and PATH is updated,
-    # proceed with other tasks that might depend on installed commands
-    install_pure_prompt &
-    
-    # Wait for background tasks
-    wait
-    
-    # Now run the rest of the setup
+    # Install additional components
     create_symlinks
+    install_pure_prompt
     install_krew
     setup_completions
     
+    # Create empty private configuration file
     touch "$HOME/.privaterc"
     
+    # Calculate and log execution time
     local end_time
     end_time=$(date +%s)
     local duration=$((end_time - start_time))
     
     log INFO "Setup completed successfully in $duration seconds"
 }
+
+# Execute main function
+main "$@"
