@@ -15,7 +15,7 @@
         kubectl
         kubectx
         k9s
-        helm
+        kubernetes-helm
         # Other tools
         lazygit
         gost
