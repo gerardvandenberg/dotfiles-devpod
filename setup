@@ -42,12 +42,15 @@ install_nix_packages() {
     nix-env -iA nixpkgs.myPackages
   }
 
-  # Wait for environment to update
-  sleep 2
-  
+  # Source nix profile to update PATH
+  if [ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ]; then
+    . "$HOME/.nix-profile/etc/profile.d/nix.sh"
+  fi
+
   # Verify required tools
   verify_commands kubectl helm || {
     echo "Required tools not found after installation"
+    echo "PATH=$PATH"
     exit 1
   }
 }
