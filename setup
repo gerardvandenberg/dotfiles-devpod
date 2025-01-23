@@ -37,20 +37,29 @@ install_nix_packages() {
   export NIXPKGS_ALLOW_UNFREE=1
   export TERM=dumb
 
+  # Install packages
   nix-env -iA nixpkgs.myPackages || {
     nix-channel --update
     nix-env -iA nixpkgs.myPackages
   }
 
-  # Source nix profile to update PATH
+  # Add Nix profile to PATH for current session
+  export PATH="$HOME/.nix-profile/bin:$PATH"
+
+  # Add to shell config files for persistence
+  echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$HOME/.bashrc"
+  [[ -f "$HOME/.zshrc" ]] && echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$HOME/.zshrc"
+
+  # Source the profile
   if [ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ]; then
     . "$HOME/.nix-profile/etc/profile.d/nix.sh"
   fi
 
-  # Verify required tools
+  # Verify after PATH update
+  echo "Updated PATH=$PATH"
   verify_commands kubectl helm || {
     echo "Required tools not found after installation"
-    echo "PATH=$PATH"
+    ls -l "$HOME/.nix-profile/bin/kubectl" "$HOME/.nix-profile/bin/helm" || true
     exit 1
   }
 }
