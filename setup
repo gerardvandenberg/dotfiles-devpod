@@ -43,19 +43,18 @@ install_nix_packages() {
     nix-env -iA nixpkgs.myPackages
   }
 
-  # Add Nix profile to PATH for current session
+  # Add Nix profile to PATH
   export PATH="$HOME/.nix-profile/bin:$PATH"
-
-  # Add to shell config files for persistence
+  
+  # Add to shell config files
   echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$HOME/.bashrc"
   [[ -f "$HOME/.zshrc" ]] && echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$HOME/.zshrc"
 
-  # Source the profile
+  # Source profile if available
   if [ -f "$HOME/.nix-profile/etc/profile.d/nix.sh" ]; then
     . "$HOME/.nix-profile/etc/profile.d/nix.sh"
   fi
 
-  # Verify after PATH update
   echo "Updated PATH=$PATH"
   verify_commands kubectl helm || {
     echo "Required tools not found after installation"
@@ -98,7 +97,14 @@ create_symlinks() {
 
 install_pure_prompt() {
   if [[ ! -d "$HOME/.zsh/pure" ]]; then
-    GIT_TERMINAL_PROMPT=0 git clone --quiet --no-interactive https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" || return 1
+    # Configure git for non-interactive operation
+    export GIT_TERMINAL_PROMPT=0
+    export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
+    
+    git clone -q https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" || {
+      echo "Warning: Pure prompt installation failed"
+      return 1
+    }
   fi
 }
 
@@ -113,15 +119,19 @@ install_krew() {
     curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/${KREW}.tar.gz"
     tar zxvf "${KREW}.tar.gz"
     
-    KREW_NO_UPGRADE_CHECK=1 ./"${KREW}" install krew
+    # Configure for non-interactive installation
+    export KREW_NO_UPGRADE_CHECK=1
+    
+    ./"${KREW}" install krew
     
     export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
     
+    # Add Krew to PATH in shell configs
     echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$HOME/.bashrc"
     [[ -f "$HOME/.zshrc" ]] && echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$HOME/.zshrc"
     
-    KREW_NO_UPGRADE_CHECK=1 kubectl krew install neat
-    KREW_NO_UPGRADE_CHECK=1 kubectl krew install image
+    kubectl krew install neat
+    kubectl krew install image
   ) || echo "Warning: Krew installation failed"
 }
 
