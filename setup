@@ -134,6 +134,19 @@ main() {
             curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz"
             tar zxf "krew-linux_arm64.tar.gz"
             ./krew-linux_arm64 install krew
+
+            # Add Krew to path temporarily for plugin installation
+            export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+            
+            # Install plugins
+            kubectl krew install neat
+            kubectl krew install image-tags
+            
+            # Add Krew path to shell configs
+            for config in "$HOME/.bashrc" "$HOME/.zshrc"; do
+                [[ -f "$config" ]] && grep -q 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' "$config" || 
+                    echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$config"
+            done
         )
     fi
     
