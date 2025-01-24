@@ -4,7 +4,6 @@ set -euo pipefail
 
 declare -A TOOLS=(
     [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero"
-    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
@@ -27,6 +26,13 @@ install_rancher_cli() {
     chmod +x "$HOME/.local/bin/rancher"
 }
 
+install_pluto() {
+    local version="v5.21.1"
+    log INFO "Installing Pluto ${version}"
+    curl -sSL -o "$HOME/.local/bin/pluto" "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+    chmod +x "$HOME/.local/bin/pluto"
+}
+
 install_tools() {
     mkdir -p "$HOME/.local/bin"
     local tmpdir
@@ -40,10 +46,11 @@ install_tools() {
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version}}"
-            curl -sSL -o "$tmpdir/${tool}.tar.gz" "$url"
-            tar xzf "$tmpdir/${tool}.tar.gz" -C "$tmpdir"
-            find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-            chmod +x "$HOME/.local/bin/$bin"
+            if curl -sSL -o "$tmpdir/${tool}.tar.gz" "$url"; then
+                tar xzf "$tmpdir/${tool}.tar.gz" -C "$tmpdir" || continue
+                find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+                chmod +x "$HOME/.local/bin/$bin"
+            fi
         fi
     done
 
