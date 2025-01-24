@@ -1,430 +1,146 @@
 #!/bin/bash
 
-# Development Environment Setup Script
-# This script sets up a complete development environment using Nix package manager
-# and additional tools. It handles package installation, configuration linking,
-# shell setup, and installation of various CLI tools for Kubernetes development.
-#
-# The script is designed to be idempotent - running it multiple times is safe.
-# It includes comprehensive error handling and logging.
-
-# Enable strict error handling and better debugging
 set -euo pipefail
 IFS=$'\n\t'
 
-# Define global constants
-readonly CONFIG_DIRS=(
-    "$HOME/.config"
-    "$HOME/.config/nixpkgs"
-    "$HOME/.zsh"
-    "$HOME/.local/bin"
-    "$HOME/.zfunc"
+declare -A TOOLS=(
+    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
+    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
+    [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd"
+    [rancher]="rancher/cli:cli-VERSION.tar.gz:rancher"
 )
 
-# Commands that must be available after installation
-readonly REQUIRED_COMMANDS=(
-    kubectl
-    helm
-    lazygit
-    velero
-    pluto
-    argocd
-    rancher
-)
+readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc")
+readonly RETRY_MAX=3
+readonly RETRY_WAIT=5
 
-# Retry settings
-readonly MAX_ATTEMPTS=3
-readonly INITIAL_WAIT=5
+log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
-# Timeout values (in seconds)
-readonly CLONE_TIMEOUT=30
-readonly INSTALL_TIMEOUT=300
-readonly DOWNLOAD_TIMEOUT=60
-
-# Enhanced error handling with call stack tracing
-error_handler() {
-    local line_num=$1
-    local command=$2
-    echo >&2 "Error occurred in command '$command' at line $line_num"
-    local frame=0
-    while caller $frame; do
-        ((frame++))
-    done >&2
-    exit 1
+verify_arm() {
+    if [[ $(uname -m) != "aarch64" && $(uname -m) != "arm64" ]]; then
+        log ERROR "This script requires ARM64 architecture"
+        exit 1
+    fi
 }
 
-trap 'error_handler ${LINENO} "${BASH_COMMAND}"' ERR
-
-# Structured logging function
-log() {
-    local level=$1
-    shift
-    echo "[$(date +'%Y-%m-%d %H:%M:%S')] [$level] $*"
+download_parallel() {
+    local -r url=$1 output=$2
+    curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$output" &
 }
 
-# Verify command existence in PATH
-verify_commands() {
-    local cmd
-    for cmd in "$@"; do
-        if ! command -v "$cmd" >/dev/null 2>&1; then
-            log ERROR "Required command not found: $cmd"
-            return 1
-        fi
-    done
-    return 0
-}
-
-# Download tool with retries and verification
-download_tool() {
-    local url="$1"
-    local output="$2"
-    local tool_name="$3"
-    local attempt=1
-    local wait_time=$INITIAL_WAIT
+install_tools() {
+    local pids=()
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
     
-    log INFO "Downloading $tool_name from $url"
-    
-    while (( attempt <= MAX_ATTEMPTS )); do
-        if timeout "$DOWNLOAD_TIMEOUT" curl -fsSL --retry 3 "$url" -o "$output"; then
-            log INFO "Successfully downloaded $tool_name"
-            return 0
-        else
-            log WARN "Attempt $attempt to download $tool_name failed"
-            (( attempt++ ))
-            if (( attempt <= MAX_ATTEMPTS )); then
-                sleep "$wait_time"
-                (( wait_time *= 2 ))
+    for tool in "${!TOOLS[@]}"; do
+        IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
+        if ! command -v "$bin" >/dev/null 2>&1; then
+            version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+            
+            if [[ $repo == "rancher/cli"* ]]; then
+                download_parallel "https://github.com/${repo}/archive/refs/tags/${version}.tar.gz" "$tmpdir/${bin}-src.tar.gz"
+            else
+                url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+                if ! curl --fail --head "$url" &>/dev/null; then
+                    log WARN "ARM64 binary not available for $tool, skipping..."
+                    continue
+                fi
+                download_parallel "$url" "$tmpdir/$bin"
             fi
+            pids+=($!)
         fi
     done
-    
-    log ERROR "Failed to download $tool_name after $MAX_ATTEMPTS attempts"
-    return 1
-}
 
-# Get latest GitHub release version
-get_github_release_version() {
-    local repo="$1"
-    local version
-    version=$(curl -s "https://api.github.com/repos/${repo}/releases/latest" | grep 'tag_name' | cut -d '"' -f 4)
-    if [[ -z "$version" ]]; then
-        log ERROR "Failed to get latest version for ${repo}"
-        return 1
-    fi
-    echo "$version"
-}
+    for pid in "${pids[@]}"; do wait "$pid"; done
 
-# Update PATH for Nix packages
-update_nix_path() {
-    export PATH="$HOME/.nix-profile/bin:$PATH"
-    
-    local nix_profile_script="$HOME/.nix-profile/etc/profile.d/nix.sh"
-    if [[ -f "$nix_profile_script" ]]; then
-        # shellcheck disable=SC1090
-        source "$nix_profile_script"
-    fi
-
-    local path_export='export PATH="$HOME/.nix-profile/bin:$PATH"'
-    update_shell_config "$path_export"
-}
-
-# Update PATH for local binaries
-update_local_path() {
-    local local_path='export PATH="$HOME/.local/bin:$PATH"'
-    update_shell_config "$local_path"
-    export PATH="$HOME/.local/bin:$PATH"
-}
-
-# Update shell configuration files
-update_shell_config() {
-    local config_line="$1"
-    local shell_configs=("$HOME/.bashrc")
-    [[ -f "$HOME/.zshrc" ]] && shell_configs+=("$HOME/.zshrc")
-    
-    for config in "${shell_configs[@]}"; do
-        if ! grep -q "$config_line" "$config" 2>/dev/null; then
-            echo "$config_line" >> "$config"
+    for tool in "${!TOOLS[@]}"; do
+        IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
+        if [[ $repo == "rancher/cli"* ]] && [[ -f "$tmpdir/${bin}-src.tar.gz" ]]; then
+            (
+                cd "$tmpdir"
+                tar xzf "${bin}-src.tar.gz"
+                cd "cli-"*
+                version=$(git describe --tags 2>/dev/null || echo "latest")
+                GOOS=linux GOARCH=arm64 GO111MODULE=on CGO_ENABLED=0 go build -ldflags "-X main.VERSION=${version}" -o "$HOME/.local/bin/rancher"
+            )
+            continue
         fi
+        
+        [[ -f "$tmpdir/$bin" ]] || continue
+        
+        case "$pattern" in
+            *.tar.gz)
+                tar xzf "$tmpdir/$bin" -C "$tmpdir"
+                find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+                ;;
+            *)
+                mv "$tmpdir/$bin" "$HOME/.local/bin/$bin"
+                chmod +x "$HOME/.local/bin/$bin"
+                ;;
+        esac
     done
 }
 
-# Setup Nix channels and configuration
 setup_nix() {
-    log INFO "Setting up Nix environment"
-    
     if [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]]; then
-        if ! nix-channel --list | grep -q "^nixpkgs "; then
-            log INFO "Adding nixpkgs channel"
-            nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
-        fi
+        nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
         nix-channel --update
     fi
-
     mkdir -p "$HOME/.config/nixpkgs"
-    
-    if [[ -f "$PWD/config.nix" ]]; then
-        ln -sf "$PWD/config.nix" "$HOME/.config/nixpkgs/config.nix"
-    else
-        log ERROR "config.nix not found in current directory"
-        exit 1
-    fi
+    [[ -f "$PWD/config.nix" ]] && ln -sf "$PWD/config.nix" "$HOME/.config/nixpkgs/config.nix"
 }
 
-# Install Nix packages
-install_nix_packages() {
-    log INFO "Installing Nix packages from config.nix"
-    
-    export NIXPKGS_ALLOW_UNFREE=1
-    export TERM=dumb
-
-    local attempt=1
-    local wait_time=$INITIAL_WAIT
-
-    while (( attempt <= MAX_ATTEMPTS )); do
-        if timeout "$INSTALL_TIMEOUT" nix-env -iA nixpkgs.myPackages; then
-            break
-        else
-            log WARN "Attempt $attempt failed. Retrying in $wait_time seconds..."
-            sleep "$wait_time"
-            (( attempt++ ))
-            (( wait_time *= 2 ))
-            
-            if (( attempt > MAX_ATTEMPTS )); then
-                log ERROR "Failed to install Nix packages after $MAX_ATTEMPTS attempts"
-                exit 1
-            fi
-            
-            nix-channel --update
-        fi
+update_paths() {
+    local config
+    for config in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        [[ -f "$config" ]] || continue
+        grep -q 'export PATH="$HOME/.nix-profile/bin:$PATH"' "$config" || 
+            echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$config"
+        grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$config" ||
+            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$config"
     done
-
-    update_nix_path
-
-    # Give the system a moment to register the new binaries
-    sleep 1
+    export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
 }
 
-# Install additional CLI tools
-install_additional_tools() {
-    log INFO "Installing additional CLI tools"
-    
-    mkdir -p "$HOME/.local/bin"
-    
-    # Install Velero
-    log INFO "Installing Velero..."
-    local velero_version
-    velero_version=$(get_github_release_version "vmware-tanzu/velero")
-    download_tool \
-        "https://github.com/vmware-tanzu/velero/releases/download/${velero_version}/velero-${velero_version}-linux-arm64.tar.gz" \
-        "velero.tar.gz" \
-        "Velero"
-    tar xzf velero.tar.gz
-    mv velero-*/velero "$HOME/.local/bin/velero"
-    rm -rf velero-* velero.tar.gz
-    
-    # Install Pluto
-    log INFO "Installing Pluto..."
-    local pluto_version
-    pluto_version=$(get_github_release_version "FairwindsOps/pluto")
-    download_tool \
-        "https://github.com/FairwindsOps/pluto/releases/download/${pluto_version}/pluto_${pluto_version#v}_linux_arm64.tar.gz" \
-        "pluto.tar.gz" \
-        "Pluto"
-    tar xzf pluto.tar.gz
-    mv pluto "$HOME/.local/bin/pluto"
-    rm pluto.tar.gz
-    
-    # Install ArgoCD CLI
-    log INFO "Installing ArgoCD CLI..."
-    local argo_version
-    argo_version=$(get_github_release_version "argoproj/argo-cd")
-    download_tool \
-        "https://github.com/argoproj/argo-cd/releases/download/${argo_version}/argocd-linux-arm64" \
-        "$HOME/.local/bin/argocd" \
-        "ArgoCD CLI"
-    chmod +x "$HOME/.local/bin/argocd"
-    
-    # Build Rancher CLI from source
-    log INFO "Building Rancher CLI from source..."
-    local rancher_version="v2.10.0"
-    local temp_dir
-    temp_dir=$(mktemp -d)
-    
-    (
-        cd "$temp_dir" || exit 1
-        
-        download_tool \
-            "https://github.com/rancher/cli/archive/refs/tags/${rancher_version}.tar.gz" \
-            "rancher-cli.tar.gz" \
-            "Rancher CLI source"
-        
-        tar xzf rancher-cli.tar.gz
-        cd "cli-${rancher_version#v}" || exit 1
-        
-        GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${rancher_version}" -o rancher
-        mv rancher "$HOME/.local/bin/rancher"
-    )
-    
-    rm -rf "$temp_dir"
-    
-    update_local_path
-}
-
-# Create symlinks for configuration files
-create_symlinks() {
-    log INFO "Creating symlinks for configuration files"
-    
-    local timestamp=$(date +%Y%m%d_%H%M%S)
-    local backup_dir="$HOME/.config/backups/$timestamp"
-    
-    declare -A links=(
-        ["$PWD/nvim"]="$HOME/.config/nvim"
-        ["$PWD/config.nix"]="$HOME/.config/nixpkgs/config.nix"
-    )
-    
-    [[ -f "$PWD/.inputrc" ]] && links["$PWD/.inputrc"]="$HOME/.inputrc"
-    [[ -f "$PWD/.tmux.conf" ]] && links["$PWD/.tmux.conf"]="$HOME/.tmux.conf"
-
-    for source in "${!links[@]}"; do
-        local target="${links[$source]}"
-        if [[ -e "$source" ]]; then
-            if [[ -e "$target" ]] && [[ ! -L "$target" ]]; then
-                mkdir -p "$backup_dir"
-                mv "$target" "$backup_dir/"
-                log INFO "Backed up $target to $backup_dir/"
-            fi
-            ln -sf "$source" "$target"
-        fi
-    done
-}
-
-# Install Pure prompt for zsh
-install_pure_prompt() {
-    log INFO "Installing Pure prompt"
-    
-    if [[ -d "$HOME/.zsh/pure" ]]; then
-        log INFO "Pure prompt already installed"
-        return 0
-    fi
-
-    export GIT_TERMINAL_PROMPT=0
-    export GIT_SSH_COMMAND="ssh -o BatchMode=yes"
-    
-    timeout "$CLONE_TIMEOUT" git clone -q https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure" || {
-        log WARN "Pure prompt installation failed or timed out"
-        return 1
-    }
-}
-
-# Install Kubernetes package manager (Krew)
-install_krew() {
-    log INFO "Installing Krew"
-    
-    if command -v kubectl-krew >/dev/null 2>&1; then
-        log INFO "Krew already installed"
-        return 0
-    fi
-
-    (
-        local temp_dir
-        temp_dir=$(mktemp -d) || exit 1
-        cd "$temp_dir" || exit 1
-        
-        trap 'rm -rf "$temp_dir"' EXIT
-        
-        local os
-        os=$(uname | tr '[:upper:]' '[:lower:]')
-        local arch
-        arch=$(uname -m | sed -e 's/x86_64/amd64/' -e 's/\(arm\)\(64\)\?.*/\1\2/' -e 's/aarch64$/arm64/')
-        local krew="krew-${os}_${arch}"
-        
-        download_tool \
-            "https://github.com/kubernetes-sigs/krew/releases/latest/download/${krew}.tar.gz" \
-            "${krew}.tar.gz" \
-            "Krew"
-            
-        tar zxf "${krew}.tar.gz"
-        
-        export KREW_NO_UPGRADE_CHECK=1
-        ./"${krew}" install krew
-        
-        local krew_path='export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"'
-        update_shell_config "$krew_path"
-        export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
-        
-        for plugin in neat image; do
-            timeout 30 kubectl krew install "$plugin" || log WARN "Failed to install Krew plugin: $plugin"
-        done
-    ) || log WARN "Krew installation failed"
-}
-
-# Setup shell completions
 setup_completions() {
-    log INFO "Setting up shell completions"
-    
     mkdir -p "$HOME/.zfunc"
-    local completion_dir="$HOME/.zfunc"
-    
+    local cmd
     for cmd in kubectl helm argocd velero; do
-        if command -v "$cmd" >/dev/null 2>&1; then
-            "$cmd" completion zsh > "$completion_dir/_$cmd" 2>/dev/null || log WARN "Failed to generate completion for $cmd"
-        else
-            log WARN "Command not found for completion: $cmd"
-        fi
+        command -v "$cmd" >/dev/null 2>&1 &&
+            "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null
     done
 }
 
-# Verify all required tools are installed
-verify_installation() {
-    log INFO "Verifying installation..."
-    
-    verify_commands "${REQUIRED_COMMANDS[@]}" || {
-        log ERROR "Not all required tools were installed correctly"
-        log INFO "Current PATH: $PATH"
-        log INFO "Contents of ~/.nix-profile/bin:"
-        ls -l "$HOME/.nix-profile/bin" || true
-        log INFO "Contents of ~/.local/bin:"
-        ls -l "$HOME/.local/bin" || true
-        exit 1
-    }
-    
-    log INFO "All required tools are installed and available"
-}
-
-# Main execution function
 main() {
-    local start_time
-    start_time=$(date +%s)
+    local start_time=$SECONDS
+    verify_arm
     
-    log INFO "Starting development environment setup"
+    log INFO "Starting ARM64 setup"
+    mkdir -p "${DIRS[@]}"
     
-    # Create all required directories
-    mkdir -p "${CONFIG_DIRS[@]}"
-    
-    # Setup and install packages
     setup_nix
-    install_nix_packages
-    install_additional_tools
+    NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
     
-    # Configure environment
-    create_symlinks
-    install_pure_prompt
-    install_krew
+    install_tools
+    update_paths
     setup_completions
     
-    # Verify installation
-    verify_installation
+    [[ ! -d "$HOME/.zsh/pure" ]] &&
+        git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
     
-    # Create empty private configuration file
+    if ! command -v kubectl-krew >/dev/null 2>&1; then
+        (
+            cd "$(mktemp -d)" || exit 1
+            curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz"
+            tar zxf "krew-linux_arm64.tar.gz"
+            ./krew-linux_arm64 install krew
+        )
+    fi
+    
     touch "$HOME/.privaterc"
-    
-    # Calculate and log execution time
-    local end_time
-    end_time=$(date +%s)
-    local duration=$((end_time - start_time))
-    
-    log INFO "Setup completed successfully in $duration seconds"
+    log INFO "Setup completed in $((SECONDS - start_time)) seconds"
 }
 
-# Execute main function
 main
