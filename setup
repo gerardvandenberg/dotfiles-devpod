@@ -20,11 +20,15 @@ install_argocd() {
 }
 
 install_pluto() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/FairwindsOps/pluto/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    local version="v5.21.1"
     log INFO "Installing Pluto ${version}"
-    curl -sSL -o "$HOME/.local/bin/pluto" "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    curl -sSL -o "$tmpdir/pluto.tar.gz" "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64.tar.gz"
+    tar xzf "$tmpdir/pluto.tar.gz" -C "$tmpdir"
+    mv "$tmpdir/pluto" "$HOME/.local/bin/pluto"
     chmod +x "$HOME/.local/bin/pluto"
+    rm -rf "$tmpdir"
 }
 
 install_rancher_cli() {
