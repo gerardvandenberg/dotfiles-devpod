@@ -3,13 +3,12 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero:true"
-    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto:true"
-    [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd:true"
+    [velero]="vmware-tanzu/velero:velero-VERSION:velero"
+    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
-readonly GO_VERSION="1.23.4"
+readonly GO_VERSION="1.21.1"
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
@@ -17,10 +16,18 @@ install_go() {
     if ! command -v go &>/dev/null; then
         log INFO "Installing Go ${GO_VERSION}"
         mkdir -p "$HOME/.local/bin"
-        nix-env -f '<nixpkgs>' -iA go_${GO_VERSION//./_}
+        NIXPKGS_ALLOW_UNFREE=1 nix-env -iA nixpkgs.go_1_21
         ln -sf "$(which go)" "$HOME/.local/bin/go"
     fi
     export PATH="$HOME/.local/bin:$PATH"
+}
+
+install_argocd() {
+    local version
+    version=$(curl -sS "https://api.github.com/repos/argoproj/argo-cd/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Installing ArgoCD CLI ${version}"
+    curl -sSL -o "$HOME/.local/bin/argocd" "https://github.com/argoproj/argo-cd/releases/download/${version}/argocd-linux-arm64"
+    chmod +x "$HOME/.local/bin/argocd"
 }
 
 install_rancher_cli() {
@@ -50,14 +57,23 @@ install_tools() {
     trap 'rm -rf "$work_dir"' EXIT
     
     for tool in "${!TOOLS[@]}"; do
-        IFS=: read -r repo pattern bin arm_only <<< "${TOOLS[$tool]}"
+        IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
         if ! command -v "$bin" >/dev/null 2>&1; then
             log INFO "Installing $tool"
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
-            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-            if curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$work_dir/$bin.tar.gz"; then
-                tar xzf "$work_dir/$bin.tar.gz" -C "$work_dir"
+            
+            case "$tool" in
+                velero)
+                    local url="https://github.com/${repo}/releases/download/${version}/${pattern}-${version#v}-linux-arm64.tar.gz"
+                    ;;
+                *)
+                    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+                    ;;
+            esac
+
+            if curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$work_dir/${tool}.tar.gz"; then
+                tar xzf "$work_dir/${tool}.tar.gz" -C "$work_dir"
                 find "$work_dir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
                 chmod +x "$HOME/.local/bin/$bin"
             else
@@ -65,6 +81,10 @@ install_tools() {
             fi
         fi
     done
+
+    if ! command -v argocd >/dev/null 2>&1; then
+        install_argocd
+    fi
 
     if ! command -v rancher >/dev/null 2>&1; then
         install_rancher_cli
