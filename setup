@@ -19,6 +19,14 @@ install_argocd() {
     chmod +x "$HOME/.local/bin/argocd"
 }
 
+install_pluto() {
+    local version
+    version=$(curl -sS "https://api.github.com/repos/FairwindsOps/pluto/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Installing Pluto ${version}"
+    curl -sSL -o "$HOME/.local/bin/pluto" "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+    chmod +x "$HOME/.local/bin/pluto"
+}
+
 install_rancher_cli() {
     local version="v2.10.0"
     log INFO "Building Rancher CLI ${version}"
@@ -39,9 +47,6 @@ install_rancher_cli() {
 
 install_tools() {
     mkdir -p "$HOME/.local/bin"
-    local work_dir
-    work_dir=$(mktemp -d)
-    trap 'rm -rf "$work_dir"' EXIT
     
     for tool in "${!TOOLS[@]}"; do
         IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
@@ -50,19 +55,20 @@ install_tools() {
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version}}"
-
-            if curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$work_dir/${tool}.tar.gz"; then
-                tar xzf "$work_dir/${tool}.tar.gz" -C "$work_dir"
-                find "$work_dir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-                chmod +x "$HOME/.local/bin/$bin"
-            else
-                log WARN "Failed to download $tool from $url"
-            fi
+            curl -sSL -o "${bin}.tar.gz" "$url"
+            tar xzf "${bin}.tar.gz"
+            find . -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+            chmod +x "$HOME/.local/bin/$bin"
+            rm -f "${bin}.tar.gz"
         fi
     done
 
     if ! command -v argocd >/dev/null 2>&1; then
         install_argocd
+    fi
+
+    if ! command -v pluto >/dev/null 2>&1; then
+        install_pluto
     fi
 
     if ! command -v rancher >/dev/null 2>&1; then
