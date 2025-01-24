@@ -31,7 +31,8 @@ install_argocd() {
 }
 
 install_rancher_cli() {
-    local version="v2.10.0"
+    local version
+    version=$(curl -sS "https://api.github.com/repos/rancher/cli/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
     log INFO "Building Rancher CLI ${version}"
     
     local build_dir
@@ -58,13 +59,11 @@ install_tools() {
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version}}"
-            local tmpdir
-            tmpdir=$(mktemp -d)
-            curl -sSL -o "$tmpdir/${bin}.tar.gz" "$url"
-            tar xzf "$tmpdir/${bin}.tar.gz" -C "$tmpdir"
-            find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+            curl -sSL -o "${bin}.tar.gz" "$url"
+            tar xzf "${bin}.tar.gz"
+            find . -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
             chmod +x "$HOME/.local/bin/$bin"
-            rm -rf "$tmpdir"
+            rm -f "${bin}.tar.gz"
         fi
     done
 
@@ -140,7 +139,7 @@ main() {
             
             # Install plugins
             kubectl krew install neat
-            kubectl krew install image-tags
+            kubectl krew install images
             
             # Add Krew path to shell configs
             for config in "$HOME/.bashrc" "$HOME/.zshrc"; do
