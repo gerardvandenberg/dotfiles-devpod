@@ -1,25 +1,22 @@
 #!/bin/bash
 
 set -euo pipefail
-IFS=$'\n\t'
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
-    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
-    [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd"
-    [rancher]="rancher/cli:cli-VERSION.tar.gz:rancher"
+    [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero:false"
+    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto:true"
+    [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd:true"
+    [rancher]="rancher/cli:cli-VERSION.tar.gz:rancher:false"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc")
-readonly RETRY_MAX=3
-readonly RETRY_WAIT=5
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
-verify_arm() {
-    if [[ $(uname -m) != "aarch64" && $(uname -m) != "arm64" ]]; then
-        log ERROR "This script requires ARM64 architecture"
-        exit 1
+verify_deps() {
+    if ! command -v go >/dev/null 2>&1; then
+        log INFO "Installing Go..."
+        nix-env -iA nixpkgs.go
     fi
 }
 
@@ -29,13 +26,14 @@ download_parallel() {
 }
 
 install_tools() {
-    local pids=()
     local tmpdir
     tmpdir=$(mktemp -d)
     trap 'rm -rf "$tmpdir"' EXIT
     
+    local pids=()
+    
     for tool in "${!TOOLS[@]}"; do
-        IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
+        IFS=: read -r repo pattern bin arm_only <<< "${TOOLS[$tool]}"
         if ! command -v "$bin" >/dev/null 2>&1; then
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             
@@ -43,10 +41,6 @@ install_tools() {
                 download_parallel "https://github.com/${repo}/archive/refs/tags/${version}.tar.gz" "$tmpdir/${bin}-src.tar.gz"
             else
                 url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-                if ! curl --fail --head "$url" &>/dev/null; then
-                    log WARN "ARM64 binary not available for $tool, skipping..."
-                    continue
-                fi
                 download_parallel "$url" "$tmpdir/$bin"
             fi
             pids+=($!)
@@ -56,14 +50,15 @@ install_tools() {
     for pid in "${pids[@]}"; do wait "$pid"; done
 
     for tool in "${!TOOLS[@]}"; do
-        IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
+        IFS=: read -r repo pattern bin _ <<< "${TOOLS[$tool]}"
         if [[ $repo == "rancher/cli"* ]] && [[ -f "$tmpdir/${bin}-src.tar.gz" ]]; then
             (
                 cd "$tmpdir"
                 tar xzf "${bin}-src.tar.gz"
                 cd "cli-"*
                 version=$(git describe --tags 2>/dev/null || echo "latest")
-                GOOS=linux GOARCH=arm64 GO111MODULE=on CGO_ENABLED=0 go build -ldflags "-X main.VERSION=${version}" -o "$HOME/.local/bin/rancher"
+                export GOOS=linux GOARCH=arm64 GO111MODULE=on CGO_ENABLED=0
+                go build -ldflags "-X main.VERSION=${version}" -o "$HOME/.local/bin/rancher"
             )
             continue
         fi
@@ -84,10 +79,10 @@ install_tools() {
 }
 
 setup_nix() {
-    if [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]]; then
+    [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]] && {
         nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
         nix-channel --update
-    fi
+    }
     mkdir -p "$HOME/.config/nixpkgs"
     [[ -f "$PWD/config.nix" ]] && ln -sf "$PWD/config.nix" "$HOME/.config/nixpkgs/config.nix"
 }
@@ -106,21 +101,20 @@ update_paths() {
 
 setup_completions() {
     mkdir -p "$HOME/.zfunc"
-    local cmd
     for cmd in kubectl helm argocd velero; do
         command -v "$cmd" >/dev/null 2>&1 &&
-            "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null
+            "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
     done
 }
 
 main() {
     local start_time=$SECONDS
-    verify_arm
     
-    log INFO "Starting ARM64 setup"
+    log INFO "Starting setup"
     mkdir -p "${DIRS[@]}"
     
     setup_nix
+    verify_deps
     NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
     
     install_tools
