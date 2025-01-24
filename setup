@@ -11,15 +11,6 @@ readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.loca
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
-install_go() {
-    if ! command -v go &>/dev/null; then
-        log INFO "Installing Go"
-        NIXPKGS_ALLOW_UNFREE=1 nix-env -iA nixpkgs.go
-        ln -sf "$(which go)" "$HOME/.local/bin/go"
-    fi
-    export PATH="$HOME/.local/bin:$PATH"
-}
-
 install_argocd() {
     local version
     version=$(curl -sS "https://api.github.com/repos/argoproj/argo-cd/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
@@ -29,8 +20,6 @@ install_argocd() {
 }
 
 install_rancher_cli() {
-    install_go
-
     local version="v2.10.0"
     log INFO "Building Rancher CLI ${version}"
     
@@ -119,6 +108,7 @@ main() {
     
     setup_nix
     NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
+    export PATH="$HOME/.nix-profile/bin:$PATH"
     
     install_tools
     update_paths
