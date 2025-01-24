@@ -6,29 +6,30 @@ declare -A TOOLS=(
     [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero:false"
     [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto:true"
     [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd:true"
-    [rancher]="rancher/cli:cli-VERSION.tar.gz:rancher:false"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc")
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
-install_go() {
-    if ! command -v go >/dev/null 2>&1; then
-        log INFO "Installing Go using Nix..."
-        local tmpProfile
-        tmpProfile="$(mktemp)"
-        trap 'rm -f "$tmpProfile"' EXIT
-        nix-env -p "$tmpProfile" -iA nixpkgs.go
-        cp -r "$tmpProfile/bin/"* "$HOME/.local/bin/"
-        chmod +x "$HOME/.local/bin/go"
-        export PATH="$HOME/.local/bin:$PATH"
-    fi
-}
-
 download_parallel() {
     local -r url=$1 output=$2
     curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$output" &
+}
+
+install_rancher_cli() {
+    local version="v2.10.0"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    (
+        cd "$tmpdir" || exit 1
+        curl -fsSL "https://github.com/rancher/cli/archive/refs/tags/${version}.tar.gz" -o rancher-cli.tar.gz
+        tar xzf rancher-cli.tar.gz
+        cd "cli-${version#v}" || exit 1
+        GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${version}" -o rancher
+        mv rancher "$HOME/.local/bin/rancher"
+    )
+    rm -rf "$tmpdir"
 }
 
 install_tools() {
@@ -42,12 +43,8 @@ install_tools() {
         IFS=: read -r repo pattern bin arm_only <<< "${TOOLS[$tool]}"
         if ! command -v "$bin" >/dev/null 2>&1; then
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-            if [[ $repo == "rancher/cli"* ]]; then
-                download_parallel "https://github.com/${repo}/archive/refs/tags/${version}.tar.gz" "$tmpdir/${bin}-src.tar.gz"
-            else
-                url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-                download_parallel "$url" "$tmpdir/$bin"
-            fi
+            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+            download_parallel "$url" "$tmpdir/$bin"
             pids+=($!)
         fi
     done
@@ -56,18 +53,6 @@ install_tools() {
 
     for tool in "${!TOOLS[@]}"; do
         IFS=: read -r repo pattern bin _ <<< "${TOOLS[$tool]}"
-        if [[ $repo == "rancher/cli"* ]] && [[ -f "$tmpdir/${bin}-src.tar.gz" ]]; then
-            (
-                cd "$tmpdir"
-                tar xzf "${bin}-src.tar.gz"
-                cd "cli-"*
-                version=$(git describe --tags 2>/dev/null || echo "latest")
-                export GOOS=linux GOARCH=arm64 GO111MODULE=on CGO_ENABLED=0
-                go build -ldflags "-X main.VERSION=${version}" -o "$HOME/.local/bin/rancher"
-            )
-            continue
-        fi
-        
         [[ -f "$tmpdir/$bin" ]] || continue
         
         case "$pattern" in
@@ -81,6 +66,10 @@ install_tools() {
                 ;;
         esac
     done
+
+    if ! command -v rancher >/dev/null 2>&1; then
+        install_rancher_cli
+    fi
 }
 
 setup_nix() {
@@ -106,7 +95,7 @@ update_paths() {
 
 setup_completions() {
     mkdir -p "$HOME/.zfunc"
-    for cmd in kubectl helm argocd velero; do
+    for cmd in kubectl helm argocd velero rancher; do
         command -v "$cmd" >/dev/null 2>&1 &&
             "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
     done
@@ -120,7 +109,6 @@ main() {
     
     setup_nix
     NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
-    install_go
     
     install_tools
     update_paths
