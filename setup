@@ -4,7 +4,7 @@ set -euo pipefail
 
 declare -A TOOLS=(
     [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
-    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
+    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_amd64.tar.gz:pluto"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
