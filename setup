@@ -19,16 +19,19 @@ install_argocd() {
 }
 
 install_rancher_cli() {
-    local version="v2.10.0"
-    log INFO "Installing Rancher CLI ${version}"
+    local version
+    version=$(curl -sS "https://api.github.com/repos/rancher/cli/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Building Rancher CLI ${version}"
     
     local tmpdir
     tmpdir=$(mktemp -d)
     (
         cd "$tmpdir"
-        curl -sSL -O "https://releases.rancher.com/cli2/${version}/rancher-v2.10.0-linux-arm64.tar.gz"
-        tar xzf rancher-v2.10.0-linux-arm64.tar.gz
-        mv rancher-v2.10.0/rancher "$HOME/.local/bin/rancher"
+        curl -sfL "https://github.com/rancher/cli/archive/refs/tags/${version}.tar.gz" -o rancher-cli.tar.gz
+        tar xzf rancher-cli.tar.gz
+        cd "cli-${version#v}"
+        GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${version}" -o rancher
+        mv rancher "$HOME/.local/bin/rancher"
         chmod +x "$HOME/.local/bin/rancher"
     )
     rm -rf "$tmpdir"
