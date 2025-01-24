@@ -13,10 +13,16 @@ readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.loca
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
-verify_deps() {
+install_go() {
     if ! command -v go >/dev/null 2>&1; then
-        log INFO "Installing Go..."
-        nix-env -iA nixpkgs.go
+        log INFO "Installing Go using Nix..."
+        local tmpProfile
+        tmpProfile="$(mktemp)"
+        trap 'rm -f "$tmpProfile"' EXIT
+        nix-env -p "$tmpProfile" -iA nixpkgs.go
+        cp -r "$tmpProfile/bin/"* "$HOME/.local/bin/"
+        chmod +x "$HOME/.local/bin/go"
+        export PATH="$HOME/.local/bin:$PATH"
     fi
 }
 
@@ -36,7 +42,6 @@ install_tools() {
         IFS=: read -r repo pattern bin arm_only <<< "${TOOLS[$tool]}"
         if ! command -v "$bin" >/dev/null 2>&1; then
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-            
             if [[ $repo == "rancher/cli"* ]]; then
                 download_parallel "https://github.com/${repo}/archive/refs/tags/${version}.tar.gz" "$tmpdir/${bin}-src.tar.gz"
             else
@@ -114,8 +119,8 @@ main() {
     mkdir -p "${DIRS[@]}"
     
     setup_nix
-    verify_deps
     NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
+    install_go
     
     install_tools
     update_paths
