@@ -3,11 +3,12 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero:false"
+    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero:true"
     [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto:true"
     [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd:true"
 )
 
+# Rest of the script remains the same
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
