@@ -8,63 +8,66 @@ declare -A TOOLS=(
     [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd:true"
 )
 
-readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc")
+readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
-download_parallel() {
-    local -r url=$1 output=$2
-    curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$output" &
-}
-
 install_rancher_cli() {
+    if ! command -v go &>/dev/null; then
+        log INFO "Installing Go from Nix"
+        nix-env -iA nixpkgs.go
+        export PATH="$PATH:$(go env GOPATH)/bin"
+    fi
+
     local version="v2.10.0"
-    local tmpdir
-    tmpdir=$(mktemp -d)
+    log INFO "Building Rancher CLI ${version}"
+    
+    local build_dir
+    build_dir=$(mktemp -d)
     (
-        cd "$tmpdir" || exit 1
-        curl -fsSL "https://github.com/rancher/cli/archive/refs/tags/${version}.tar.gz" -o rancher-cli.tar.gz
+        cd "$build_dir"
+        curl -sfL "https://github.com/rancher/cli/archive/refs/tags/${version}.tar.gz" -o rancher-cli.tar.gz
         tar xzf rancher-cli.tar.gz
-        cd "cli-${version#v}" || exit 1
+        cd "cli-${version#v}"
         GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${version}" -o rancher
         mv rancher "$HOME/.local/bin/rancher"
+        chmod +x "$HOME/.local/bin/rancher"
     )
-    rm -rf "$tmpdir"
+    rm -rf "$build_dir"
+}
+
+download_tool() {
+    local url=$1 output=$2
+    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$output"; then
+        log ERROR "Failed to download: $url"
+        return 1
+    fi
 }
 
 install_tools() {
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    trap 'rm -rf "$tmpdir"' EXIT
-    
-    local pids=()
+    mkdir -p "$HOME/.local/bin"
+    local work_dir
+    work_dir=$(mktemp -d)
+    trap 'rm -rf "$work_dir"' EXIT
     
     for tool in "${!TOOLS[@]}"; do
         IFS=: read -r repo pattern bin arm_only <<< "${TOOLS[$tool]}"
         if ! command -v "$bin" >/dev/null 2>&1; then
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-            download_parallel "$url" "$tmpdir/$bin"
-            pids+=($!)
+            if download_tool "$url" "$work_dir/$bin"; then
+                case "$pattern" in
+                    *.tar.gz)
+                        tar xzf "$work_dir/$bin" -C "$work_dir"
+                        find "$work_dir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+                        ;;
+                    *)
+                        mv "$work_dir/$bin" "$HOME/.local/bin/$bin"
+                        chmod +x "$HOME/.local/bin/$bin"
+                        ;;
+                esac
+            fi
         fi
-    done
-
-    for pid in "${pids[@]}"; do wait "$pid"; done
-
-    for tool in "${!TOOLS[@]}"; do
-        IFS=: read -r repo pattern bin _ <<< "${TOOLS[$tool]}"
-        [[ -f "$tmpdir/$bin" ]] || continue
-        
-        case "$pattern" in
-            *.tar.gz)
-                tar xzf "$tmpdir/$bin" -C "$tmpdir"
-                find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-                ;;
-            *)
-                mv "$tmpdir/$bin" "$HOME/.local/bin/$bin"
-                chmod +x "$HOME/.local/bin/$bin"
-                ;;
-        esac
     done
 
     if ! command -v rancher >/dev/null 2>&1; then
@@ -96,8 +99,9 @@ update_paths() {
 setup_completions() {
     mkdir -p "$HOME/.zfunc"
     for cmd in kubectl helm argocd velero rancher; do
-        command -v "$cmd" >/dev/null 2>&1 &&
+        if command -v "$cmd" >/dev/null 2>&1; then
             "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
+        fi
     done
 }
 
