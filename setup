@@ -4,20 +4,11 @@ set -euo pipefail
 
 declare -A TOOLS=(
     [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
-    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
-
-install_argocd() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/argoproj/argo-cd/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Installing ArgoCD CLI ${version}"
-    curl -sSL -o "$HOME/.local/bin/argocd" "https://github.com/argoproj/argo-cd/releases/download/${version}/argocd-linux-arm64"
-    chmod +x "$HOME/.local/bin/argocd"
-}
 
 install_pluto() {
     local version="v5.21.1"
@@ -29,6 +20,14 @@ install_pluto() {
     mv "$tmpdir/pluto" "$HOME/.local/bin/pluto"
     chmod +x "$HOME/.local/bin/pluto"
     rm -rf "$tmpdir"
+}
+
+install_argocd() {
+    local version
+    version=$(curl -sS "https://api.github.com/repos/argoproj/argo-cd/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Installing ArgoCD CLI ${version}"
+    curl -sSL -o "$HOME/.local/bin/argocd" "https://github.com/argoproj/argo-cd/releases/download/${version}/argocd-linux-arm64"
+    chmod +x "$HOME/.local/bin/argocd"
 }
 
 install_rancher_cli() {
@@ -59,11 +58,13 @@ install_tools() {
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version}}"
-            curl -sSL -o "${bin}.tar.gz" "$url"
-            tar xzf "${bin}.tar.gz"
-            find . -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+            local tmpdir
+            tmpdir=$(mktemp -d)
+            curl -sSL -o "$tmpdir/${bin}.tar.gz" "$url"
+            tar xzf "$tmpdir/${bin}.tar.gz" -C "$tmpdir"
+            find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
             chmod +x "$HOME/.local/bin/$bin"
-            rm -f "${bin}.tar.gz"
+            rm -rf "$tmpdir"
         fi
     done
 
@@ -103,7 +104,7 @@ update_paths() {
 
 setup_completions() {
     mkdir -p "$HOME/.zfunc"
-    for cmd in kubectl helm argocd velero rancher; do
+    for cmd in kubectl helm argocd velero rancher pluto; do
         if command -v "$cmd" >/dev/null 2>&1; then
             "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
         fi
