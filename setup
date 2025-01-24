@@ -3,20 +3,18 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION:velero"
+    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
     [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
-readonly GO_VERSION="1.21.1"
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
 install_go() {
     if ! command -v go &>/dev/null; then
-        log INFO "Installing Go ${GO_VERSION}"
-        mkdir -p "$HOME/.local/bin"
-        NIXPKGS_ALLOW_UNFREE=1 nix-env -iA nixpkgs.go_1_21
+        log INFO "Installing Go"
+        NIXPKGS_ALLOW_UNFREE=1 nix-env -iA nixpkgs.go
         ln -sf "$(which go)" "$HOME/.local/bin/go"
     fi
     export PATH="$HOME/.local/bin:$PATH"
@@ -62,15 +60,7 @@ install_tools() {
             log INFO "Installing $tool"
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
-            
-            case "$tool" in
-                velero)
-                    local url="https://github.com/${repo}/releases/download/${version}/${pattern}-${version#v}-linux-arm64.tar.gz"
-                    ;;
-                *)
-                    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-                    ;;
-            esac
+            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version}}"
 
             if curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$work_dir/${tool}.tar.gz"; then
                 tar xzf "$work_dir/${tool}.tar.gz" -C "$work_dir"
