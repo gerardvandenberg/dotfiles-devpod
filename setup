@@ -20,14 +20,14 @@ install_argocd() {
 
 install_rancher_cli() {
     local version
-    version=$(curl -sS "https://api.github.com/repos/rancher/cli/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    version="v2.10.0"  # Hardcoding version since latest release doesn't have ARM64 binary
     log INFO "Installing Rancher CLI ${version}"
     
     local tmpdir
     tmpdir=$(mktemp -d)
     (
         cd "$tmpdir"
-        curl -sSL "https://github.com/rancher/cli/releases/download/${version}/rancher-linux-arm64-${version}.tar.gz" -o rancher.tar.gz
+        curl -sSL "https://releases.rancher.com/cli2/${version}/rancher-linux-arm64-${version}.tar.gz" -o rancher.tar.gz
         tar xzf rancher.tar.gz
         mv rancher-*/rancher "$HOME/.local/bin/rancher"
         chmod +x "$HOME/.local/bin/rancher"
