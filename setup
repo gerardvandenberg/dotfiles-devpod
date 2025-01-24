@@ -19,6 +19,12 @@ install_argocd() {
 }
 
 install_rancher_cli() {
+    if ! command -v go &>/dev/null; then
+        log INFO "Installing Go"
+        NIXPKGS_ALLOW_UNFREE=1 nix-env -iA nixpkgs.go
+        export PATH="$HOME/.nix-profile/bin:$PATH"
+    fi
+
     local version
     version=$(curl -sS "https://api.github.com/repos/rancher/cli/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
     log INFO "Building Rancher CLI ${version}"
