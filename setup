@@ -3,24 +3,13 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
+    [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero"
+    [pluto]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
-
-install_pluto() {
-    local version="v5.21.1"
-    log INFO "Installing Pluto ${version}"
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    curl -sSL -o "$tmpdir/pluto.tar.gz" "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64.tar.gz"
-    tar xzf "$tmpdir/pluto.tar.gz" -C "$tmpdir"
-    mv "$tmpdir/pluto" "$HOME/.local/bin/pluto"
-    chmod +x "$HOME/.local/bin/pluto"
-    rm -rf "$tmpdir"
-}
 
 install_argocd() {
     local version
@@ -33,24 +22,16 @@ install_argocd() {
 install_rancher_cli() {
     local version
     version=$(curl -sS "https://api.github.com/repos/rancher/cli/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Building Rancher CLI ${version}"
-    
-    local build_dir
-    build_dir=$(mktemp -d)
-    (
-        cd "$build_dir"
-        curl -sfL "https://github.com/rancher/cli/archive/refs/tags/${version}.tar.gz" -o rancher-cli.tar.gz
-        tar xzf rancher-cli.tar.gz
-        cd "cli-${version#v}"
-        GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${version}" -o rancher
-        mv rancher "$HOME/.local/bin/rancher"
-        chmod +x "$HOME/.local/bin/rancher"
-    )
-    rm -rf "$build_dir"
+    log INFO "Installing Rancher CLI ${version}"
+    curl -sSL -o "$HOME/.local/bin/rancher" "https://github.com/rancher/cli/releases/download/${version}/rancher-linux-arm64-${version#v}"
+    chmod +x "$HOME/.local/bin/rancher"
 }
 
 install_tools() {
     mkdir -p "$HOME/.local/bin"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    trap 'rm -rf "$tmpdir"' EXIT
     
     for tool in "${!TOOLS[@]}"; do
         IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
@@ -59,20 +40,15 @@ install_tools() {
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version}}"
-            curl -sSL -o "${bin}.tar.gz" "$url"
-            tar xzf "${bin}.tar.gz"
-            find . -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+            curl -sSL -o "$tmpdir/${tool}.tar.gz" "$url"
+            tar xzf "$tmpdir/${tool}.tar.gz" -C "$tmpdir"
+            find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
             chmod +x "$HOME/.local/bin/$bin"
-            rm -f "${bin}.tar.gz"
         fi
     done
 
     if ! command -v argocd >/dev/null 2>&1; then
         install_argocd
-    fi
-
-    if ! command -v pluto >/dev/null 2>&1; then
-        install_pluto
     fi
 
     if ! command -v rancher >/dev/null 2>&1; then
@@ -97,6 +73,8 @@ update_paths() {
             echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$config"
         grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$config" ||
             echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$config"
+        grep -q 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' "$config" ||
+            echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$config"
     done
     export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
 }
@@ -118,7 +96,6 @@ main() {
     
     setup_nix
     NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
-    export PATH="$HOME/.nix-profile/bin:$PATH"
     
     install_tools
     update_paths
@@ -136,16 +113,8 @@ main() {
 
             # Add Krew to path temporarily for plugin installation
             export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
-            
-            # Install plugins
             kubectl krew install neat
             kubectl krew install images
-            
-            # Add Krew path to shell configs
-            for config in "$HOME/.bashrc" "$HOME/.zshrc"; do
-                [[ -f "$config" ]] && grep -q 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' "$config" || 
-                    echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$config"
-            done
         )
     fi
     
