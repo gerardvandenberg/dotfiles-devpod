@@ -8,17 +8,23 @@ declare -A TOOLS=(
     [argocd]="argoproj/argo-cd:argocd-linux-arm64:argocd:true"
 )
 
-# Rest of the script remains the same
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
+readonly GO_VERSION="1.23.4"
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
-install_rancher_cli() {
+install_go() {
     if ! command -v go &>/dev/null; then
-        log INFO "Installing Go from Nix"
-        nix-env -iA nixpkgs.go
-        export PATH="$PATH:$(go env GOPATH)/bin"
+        log INFO "Installing Go ${GO_VERSION}"
+        mkdir -p "$HOME/.local/bin"
+        nix-env -f '<nixpkgs>' -iA go_${GO_VERSION//./_}
+        ln -sf "$(which go)" "$HOME/.local/bin/go"
     fi
+    export PATH="$HOME/.local/bin:$PATH"
+}
+
+install_rancher_cli() {
+    install_go
 
     local version="v2.10.0"
     log INFO "Building Rancher CLI ${version}"
@@ -37,14 +43,6 @@ install_rancher_cli() {
     rm -rf "$build_dir"
 }
 
-download_tool() {
-    local url=$1 output=$2
-    if ! curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$output"; then
-        log ERROR "Failed to download: $url"
-        return 1
-    fi
-}
-
 install_tools() {
     mkdir -p "$HOME/.local/bin"
     local work_dir
@@ -54,19 +52,16 @@ install_tools() {
     for tool in "${!TOOLS[@]}"; do
         IFS=: read -r repo pattern bin arm_only <<< "${TOOLS[$tool]}"
         if ! command -v "$bin" >/dev/null 2>&1; then
+            log INFO "Installing $tool"
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+            log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-            if download_tool "$url" "$work_dir/$bin"; then
-                case "$pattern" in
-                    *.tar.gz)
-                        tar xzf "$work_dir/$bin" -C "$work_dir"
-                        find "$work_dir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-                        ;;
-                    *)
-                        mv "$work_dir/$bin" "$HOME/.local/bin/$bin"
-                        chmod +x "$HOME/.local/bin/$bin"
-                        ;;
-                esac
+            if curl -fsSL --retry 3 --connect-timeout 10 --max-time 60 "$url" -o "$work_dir/$bin.tar.gz"; then
+                tar xzf "$work_dir/$bin.tar.gz" -C "$work_dir"
+                find "$work_dir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+                chmod +x "$HOME/.local/bin/$bin"
+            else
+                log WARN "Failed to download $tool from $url"
             fi
         fi
     done
