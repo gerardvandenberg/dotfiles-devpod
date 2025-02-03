@@ -18,6 +18,14 @@ install_argocd() {
     chmod +x "$HOME/.local/bin/argocd"
 }
 
+install_argo() {
+    local version
+    version=$(curl -sS "https://api.github.com/repos/argoproj/argo-workflows/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Installing Argo Workflows CLI ${version}"
+    curl -sSL -o "$HOME/.local/bin/argo" "https://github.com/argoproj/argo-workflows/releases/download/${version}/argo-linux-arm64"
+    chmod +x "$HOME/.local/bin/argo"
+}
+
 install_rancher_cli() {
     if ! command -v go &>/dev/null; then
         log INFO "Installing Go"
@@ -76,6 +84,10 @@ install_tools() {
         install_argocd
     fi
 
+    if ! command -v argo >/dev/null 2>&1; then
+        install_argo
+    fi
+
     if ! command -v rancher >/dev/null 2>&1; then
         install_rancher_cli
     fi
@@ -106,7 +118,7 @@ update_paths() {
 
 setup_completions() {
     mkdir -p "$HOME/.zfunc"
-    for cmd in kubectl helm argocd velero rancher pluto; do
+    for cmd in kubectl helm argocd argo velero rancher pluto; do
         if command -v "$cmd" >/dev/null 2>&1; then
             "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
         fi
