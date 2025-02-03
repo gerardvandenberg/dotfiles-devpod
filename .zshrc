@@ -5,7 +5,7 @@ plugins=(git zsh-autosuggestions zsh-syntax-highlighting web-search)
 set -o vi
 export VISUAL=nvim
 export EDITOR=nvim
-# export TERM="tmux-256color"
+export TERM="xterm-256color"
 export BROWSER="edge"
 # Directories
 export REPOS="$HOME/Repos"
