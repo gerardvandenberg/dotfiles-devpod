@@ -160,7 +160,7 @@ main() {
             # Add Krew to path temporarily for plugin installation
             export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
             kubectl krew install neat
-            kubectl krew install images
+            kubectl krew install image
         )
     fi
     
