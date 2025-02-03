@@ -10,6 +10,7 @@
         fzf
         ripgrep
         direnv
+        tmux
         # Kubernetes tools
         kubectl
         kubectx
