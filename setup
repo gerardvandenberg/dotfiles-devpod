@@ -22,8 +22,17 @@ install_argo() {
     local version
     version=$(curl -sS "https://api.github.com/repos/argoproj/argo-workflows/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
     log INFO "Installing Argo Workflows CLI ${version}"
-    curl -sSL -o "$HOME/.local/bin/argo" "https://github.com/argoproj/argo-workflows/releases/download/${version}/argo-linux-arm64"
-    chmod +x "$HOME/.local/bin/argo"
+    
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    (
+        cd "$tmpdir"
+        curl -sSL "https://github.com/argoproj/argo-workflows/releases/download/${version}/argo-linux-arm64.gz" -o argo.gz
+        gunzip argo.gz
+        chmod +x argo
+        mv argo "$HOME/.local/bin/argo"
+    )
+    rm -rf "$tmpdir"
 }
 
 install_rancher_cli() {
