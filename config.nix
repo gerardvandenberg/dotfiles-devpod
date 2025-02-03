@@ -9,6 +9,7 @@
         neovim
         fzf
         ripgrep
+        direnv
         # Kubernetes tools
         kubectl
         kubectx
