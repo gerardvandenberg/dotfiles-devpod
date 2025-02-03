@@ -17,6 +17,7 @@
         # Other tools
         lazygit
         gost
+        rke
       ];
     };
   };
