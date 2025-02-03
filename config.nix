@@ -7,8 +7,6 @@
         # Basic development tools
         zsh-completions
         neovim
-        go
-        nodejs_20
         fzf
         ripgrep
         # Kubernetes tools
