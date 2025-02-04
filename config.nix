@@ -11,6 +11,10 @@
         ripgrep
         direnv
         tmux
+        ping
+        nslookup
+        dig
+        nc
         # Kubernetes tools
         kubectl
         kubectx
