@@ -11,16 +11,14 @@
         ripgrep
         direnv
         tmux
-        ping
-        nslookup
-        dig
-        nc
         # Kubernetes tools
         kubectl
         kubectx
         k9s
         kubernetes-helm
         # Other tools
+        bind
+        nmap
         lazygit
         gost
         rke
