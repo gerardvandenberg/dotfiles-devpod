@@ -16,6 +16,7 @@ export LAB="$GHREPOS/lab"
 export SCRIPTS="$DOTFILES/scripts"
 export ICLOUD="$HOME/icloud"
 export ZETTELKASTEN="$HOME/Zettelkasten"
+export LANG=en_US.utf8
 # Aliases
 alias ls='ls --color=auto'
 alias lab='cd $LAB'
