@@ -18,7 +18,8 @@
         kubernetes-helm
         # Other tools
         bind
-        nmap
+        inetutils
+        netcat
         lazygit
         gost
         rke
