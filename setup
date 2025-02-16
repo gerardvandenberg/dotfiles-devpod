@@ -3,7 +3,7 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero"
+    [velero]="vmware-tanzu/velero:velero_VERSION_linux_arm64.tar.gz:velero"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
@@ -109,21 +109,40 @@ install_tools() {
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+            log INFO "Downloading from: $url"
             
             # Download the archive
             local archive="$tmpdir/${tool}.archive"
             if curl -sSL -o "$archive" "$url"; then
+                log INFO "Download completed for ${tool}, attempting extraction"
                 case "$url" in
                     *.tar.gz)
-                        tar xzf "$archive" -C "$tmpdir" || continue
+                        tar xzvf "$archive" -C "$tmpdir" || {
+                            log ERROR "Failed to extract $archive"
+                            continue
+                        }
                         ;;
                     *.zip)
-                        unzip -q "$archive" -d "$tmpdir" || continue
+                        unzip -l "$archive"  # List contents before extracting
+                        unzip -q "$archive" -d "$tmpdir" || {
+                            log ERROR "Failed to extract $archive"
+                            continue
+                        }
                         ;;
                 esac
+                
+                # Show what we found
+                log INFO "Looking for binary named '$bin' in extracted files"
+                find "$tmpdir" -type f -name "$bin" -ls
+                
                 find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
                 chmod +x "$HOME/.local/bin/$bin"
+                log INFO "Successfully installed $tool"
+            else
+                log ERROR "Failed to download $url"
             fi
+        else
+            log INFO "$tool is already installed"
         fi
     done
 
