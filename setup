@@ -3,7 +3,7 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero"
+    [velero]="vmware-tanzu/velero:velero-v\${version}-linux-amd64.tar.gz:velero"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
@@ -37,8 +37,14 @@ install_pluto() {
     tmpdir=$(mktemp -d)
     (
         cd "$tmpdir"
-        log INFO "Downloading Pluto from: https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
-        curl -sSL -o pluto "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+        local url="https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+        log INFO "Downloading Pluto from: ${url}"
+        
+        # Use -L to follow redirects and -f to fail silently
+        if ! curl -fsSL "$url" -o pluto; then
+            log ERROR "Failed to download Pluto"
+            return 1
+        fi
         
         # Verify download
         if [ ! -f pluto ]; then
@@ -47,17 +53,16 @@ install_pluto() {
         fi
         
         log INFO "Downloaded Pluto binary size: $(wc -c < pluto) bytes"
-        log INFO "Making binary executable"
         chmod +x pluto
+        mv pluto "$HOME/.local/bin/pluto"
         
-        # Verify executable
-        if ! ./pluto version >/dev/null 2>&1; then
-            log ERROR "Downloaded binary is not a valid Pluto executable"
+        # Verify installation
+        if "$HOME/.local/bin/pluto" version >/dev/null 2>&1; then
+            log INFO "Successfully installed Pluto ${version}"
+        else
+            log ERROR "Failed to verify Pluto installation"
             return 1
         fi
-        
-        mv pluto "$HOME/.local/bin/pluto"
-        log INFO "Successfully installed Pluto"
     )
     rm -rf "$tmpdir"
 }
@@ -123,6 +128,7 @@ install_tools() {
         if ! command -v "$bin" >/dev/null 2>&1; then
             log INFO "Installing $tool"
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+            log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
             log INFO "Downloading from: $url"
             
@@ -144,9 +150,6 @@ install_tools() {
                         }
                         ;;
                 esac
-                
-                log INFO "Looking for binary in extracted files:"
-                ls -R "$tmpdir"
                 
                 # Find and move the binary
                 if ! find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;; then
