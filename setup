@@ -4,12 +4,47 @@ set -euo pipefail
 
 declare -A TOOLS=(
     [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero"
-    [vault]="hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
+
+install_vault() {
+    local version
+    version=$(curl -sS "https://api.github.com/repos/hashicorp/vault/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Installing Vault ${version}"
+    
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    (
+        cd "$tmpdir"
+        log INFO "Downloading Vault from: https://releases.hashicorp.com/vault/${version#v}/vault_${version#v}_linux_arm64.zip"
+        curl -sSLO "https://releases.hashicorp.com/vault/${version#v}/vault_${version#v}_linux_arm64.zip"
+        unzip -q "vault_${version#v}_linux_arm64.zip"
+        chmod +x vault
+        mv vault "$HOME/.local/bin/vault"
+    )
+    rm -rf "$tmpdir"
+}
+
+install_pluto() {
+    local version
+    version=$(curl -sS "https://api.github.com/repos/FairwindsOps/pluto/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Installing Pluto ${version}"
+    
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    (
+        cd "$tmpdir"
+        log INFO "Downloading Pluto from: https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+        curl -sSLO "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+        mv "pluto_${version#v}_linux_arm64" pluto
+        chmod +x pluto
+        mv pluto "$HOME/.local/bin/pluto"
+    )
+    rm -rf "$tmpdir"
+}
 
 install_argocd() {
     local version
@@ -61,14 +96,6 @@ install_rancher_cli() {
     rm -rf "$tmpdir"
 }
 
-install_pluto() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/FairwindsOps/pluto/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Installing Pluto ${version}"
-    curl -sSL -o "$HOME/.local/bin/pluto" "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
-    chmod +x "$HOME/.local/bin/pluto"
-}
-
 install_tools() {
     mkdir -p "$HOME/.local/bin"
     local tmpdir
@@ -100,6 +127,14 @@ install_tools() {
         fi
     done
 
+    if ! command -v vault >/dev/null 2>&1; then
+        install_vault
+    fi
+
+    if ! command -v pluto >/dev/null 2>&1; then
+        install_pluto
+    fi
+
     if ! command -v argocd >/dev/null 2>&1; then
         install_argocd
     fi
@@ -110,10 +145,6 @@ install_tools() {
 
     if ! command -v rancher >/dev/null 2>&1; then
         install_rancher_cli
-    fi
-
-    if ! command -v pluto >/dev/null 2>&1; then
-        install_pluto
     fi
 }
 
