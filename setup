@@ -54,7 +54,7 @@ verify_binary() {
     if [[ ! -x "$bin_path" ]]; then
         log ERROR "Binary $bin_path is not executable"
         return 1
-    fi
+    }
 
     # Try to run version check
     if ! "$bin_path" version >/dev/null 2>&1; then
@@ -175,7 +175,7 @@ install_tool() {
         if [[ -z "$binary_path" ]]; then
             log ERROR "Could not find binary $bin_name in extracted archive"
             return 1
-        }
+        fi
         cp "$binary_path" "$HOME/.local/bin/$bin_name"
     fi
 
