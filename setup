@@ -19,7 +19,7 @@ readonly DIRS=(
 
 # Tool definitions with explicit versions
 declare -A TOOLS=(
-    ["velero"]="vmware-tanzu/velero:v1.15.2:velero-vVERSION-linux-arm64.tar.gz:velero"
+    ["velero"]="vmware-tanzu/velero:v1.12.0:velero-vVERSION-linux-arm64.tar.gz:velero"
     ["vault"]="hashicorp/vault:v1.13.0:vault_VERSION_linux_arm64.zip:vault"
     ["pluto"]="FairwindsOps/pluto:v5.16.1:pluto_VERSION_linux_arm64.tar.gz:pluto"
 )
@@ -56,11 +56,21 @@ verify_binary() {
         return 1
     fi
 
-    # Try to run version check
-    if ! "$bin_path" version >/dev/null 2>&1; then
-        log ERROR "Failed to verify $name installation - version check failed"
-        return 1
-    fi
+    # Try to run version check based on tool
+    case "$name" in
+        velero)
+            if ! "$bin_path" version --client-only >/dev/null 2>&1; then
+                log ERROR "Failed to verify $name installation - version check failed"
+                return 1
+            fi
+            ;;
+        *)
+            if ! "$bin_path" version >/dev/null 2>&1; then
+                log ERROR "Failed to verify $name installation - version check failed"
+                return 1
+            fi
+            ;;
+    esac
 
     return 0
 }
@@ -115,14 +125,67 @@ extract_archive() {
     return 0
 }
 
+install_velero() {
+    local version="$1"
+    local tmpdir
+    
+    tmpdir=$(mktemp -d)
+    trap 'cleanup "$tmpdir"' EXIT
+
+    log INFO "Installing Velero $version"
+    
+    local url="https://github.com/vmware-tanzu/velero/releases/download/${version}/velero-${version#v}-linux-arm64.tar.gz"
+    debug_log "Download URL: $url"
+
+    local extract_dir="$tmpdir/extract"
+    mkdir -p "$extract_dir"
+
+    if ! download_file "$url" "$tmpdir/velero.tar.gz"; then
+        return 1
+    fi
+
+    if ! tar xzf "$tmpdir/velero.tar.gz" -C "$extract_dir"; then
+        log ERROR "Failed to extract Velero archive"
+        return 1
+    fi
+
+    local velero_dir
+    velero_dir=$(find "$extract_dir" -type d -name "velero-*" -print -quit)
+    if [[ ! -d "$velero_dir" ]]; then
+        log ERROR "Could not find Velero directory in extracted archive"
+        return 1
+    fi
+
+    debug_log "Found Velero directory: $velero_dir"
+    if [[ ! -f "$velero_dir/velero" ]]; then
+        log ERROR "Could not find velero binary in extracted directory"
+        return 1
+    fi
+
+    cp "$velero_dir/velero" "$HOME/.local/bin/velero"
+    chmod +x "$HOME/.local/bin/velero"
+
+    if verify_binary "$HOME/.local/bin/velero" "velero"; then
+        log INFO "Successfully installed Velero $version"
+        return 0
+    fi
+    
+    return 1
+}
+
 install_tool() {
     local name="$1"
     local repo="$2"
     local version="$3"
     local pattern="$4"
     local bin_name="$5"
-    local tmpdir
     
+    # Special handling for Velero
+    if [[ "$name" == "velero" ]]; then
+        return $(install_velero "$version")
+    fi
+
+    local tmpdir
     tmpdir=$(mktemp -d)
     trap 'cleanup "$tmpdir"' EXIT
 
@@ -159,35 +222,22 @@ install_tool() {
 
     # Install binary
     debug_log "Looking for binary: $bin_name in $extract_dir"
-    if [[ "$name" == "velero" ]]; then
-        # Special handling for Velero
-        local velero_dir
-        velero_dir=$(find "$extract_dir" -type d -name "velero-v*" -print -quit)
-        if [[ -z "$velero_dir" ]]; then
-            log ERROR "Could not find Velero directory in extracted archive"
-            return 1
-        fi
-        debug_log "Found Velero directory: $velero_dir"
-        cp "$velero_dir/velero" "$HOME/.local/bin/velero"
-    else
-        # Generic binary installation
-        local binary_path
-        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
-        if [[ -z "$binary_path" ]]; then
-            log ERROR "Could not find binary $bin_name in extracted archive"
-            return 1
-        fi
-        cp "$binary_path" "$HOME/.local/bin/$bin_name"
+    local binary_path
+    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    if [[ -z "$binary_path" ]]; then
+        log ERROR "Could not find binary $bin_name in extracted archive"
+        return 1
     fi
 
+    cp "$binary_path" "$HOME/.local/bin/$bin_name"
     chmod +x "$HOME/.local/bin/$bin_name"
     
     if verify_binary "$HOME/.local/bin/$bin_name" "$name"; then
         log INFO "Successfully installed $name $version"
         return 0
-    else
-        return 1
     fi
+    
+    return 1
 }
 
 install_tools() {
