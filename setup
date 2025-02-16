@@ -3,7 +3,7 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero_VERSION_linux_arm64.tar.gz:velero"
+    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
@@ -38,10 +38,26 @@ install_pluto() {
     (
         cd "$tmpdir"
         log INFO "Downloading Pluto from: https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
-        curl -sSLO "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
-        mv "pluto_${version#v}_linux_arm64" pluto
+        curl -sSL -o pluto "https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+        
+        # Verify download
+        if [ ! -f pluto ]; then
+            log ERROR "Failed to download Pluto binary"
+            return 1
+        fi
+        
+        log INFO "Downloaded Pluto binary size: $(wc -c < pluto) bytes"
+        log INFO "Making binary executable"
         chmod +x pluto
+        
+        # Verify executable
+        if ! ./pluto version >/dev/null 2>&1; then
+            log ERROR "Downloaded binary is not a valid Pluto executable"
+            return 1
+        fi
+        
         mv pluto "$HOME/.local/bin/pluto"
+        log INFO "Successfully installed Pluto"
     )
     rm -rf "$tmpdir"
 }
@@ -107,7 +123,6 @@ install_tools() {
         if ! command -v "$bin" >/dev/null 2>&1; then
             log INFO "Installing $tool"
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-            log INFO "Latest version: $version"
             url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
             log INFO "Downloading from: $url"
             
@@ -123,7 +138,6 @@ install_tools() {
                         }
                         ;;
                     *.zip)
-                        unzip -l "$archive"  # List contents before extracting
                         unzip -q "$archive" -d "$tmpdir" || {
                             log ERROR "Failed to extract $archive"
                             continue
@@ -131,13 +145,21 @@ install_tools() {
                         ;;
                 esac
                 
-                # Show what we found
-                log INFO "Looking for binary named '$bin' in extracted files"
-                find "$tmpdir" -type f -name "$bin" -ls
+                log INFO "Looking for binary in extracted files:"
+                ls -R "$tmpdir"
                 
-                find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+                # Find and move the binary
+                if ! find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;; then
+                    log ERROR "Could not find binary $bin in extracted files"
+                    continue
+                fi
+                
                 chmod +x "$HOME/.local/bin/$bin"
-                log INFO "Successfully installed $tool"
+                if [ -x "$HOME/.local/bin/$bin" ]; then
+                    log INFO "Successfully installed $tool"
+                else
+                    log ERROR "Failed to make $tool executable"
+                fi
             else
                 log ERROR "Failed to download $url"
             fi
