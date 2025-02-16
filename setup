@@ -2,6 +2,11 @@
 
 set -euo pipefail
 
+# Enable debug mode for more detailed output
+if [[ "${DEBUG:-false}" == "true" ]]; then
+    set -x
+fi
+
 # Global variables
 readonly DIRS=(
     "$HOME/.config"
@@ -12,91 +17,176 @@ readonly DIRS=(
     "$HOME/.krew/bin"
 )
 
-# Tool definitions
+# Tool definitions with explicit versions
 declare -A TOOLS=(
-    ["velero"]="vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
-    ["vault"]="hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
-    ["pluto"]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
+    ["velero"]="vmware-tanzu/velero:v1.15.2:velero-vVERSION-linux-arm64.tar.gz:velero"
+    ["vault"]="hashicorp/vault:v1.13.0:vault_VERSION_linux_arm64.zip:vault"
+    ["pluto"]="FairwindsOps/pluto:v5.16.1:pluto_VERSION_linux_arm64.tar.gz:pluto"
 )
 
 log() {
     printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"
 }
 
-cleanup() {
-    local dir_to_cleanup="$1"
-    [[ -d "$dir_to_cleanup" ]] && rm -rf "$dir_to_cleanup"
+debug_log() {
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        log "DEBUG" "$1"
+    fi
 }
 
-download_and_verify() {
+cleanup() {
+    local dir_to_cleanup="$1"
+    if [[ -d "$dir_to_cleanup" ]]; then
+        debug_log "Cleaning up directory: $dir_to_cleanup"
+        rm -rf "$dir_to_cleanup"
+    fi
+}
+
+verify_binary() {
+    local bin_path="$1"
+    local name="$2"
+
+    if [[ ! -f "$bin_path" ]]; then
+        log ERROR "Binary not found at $bin_path"
+        return 1
+    fi
+
+    if [[ ! -x "$bin_path" ]]; then
+        log ERROR "Binary $bin_path is not executable"
+        return 1
+    }
+
+    # Try to run version check
+    if ! "$bin_path" version >/dev/null 2>&1; then
+        log ERROR "Failed to verify $name installation - version check failed"
+        return 1
+    fi
+
+    return 0
+}
+
+download_file() {
     local url="$1"
     local output="$2"
     local max_retries=3
     local retry_count=0
 
     while [[ $retry_count -lt $max_retries ]]; do
-        if curl -sSL --retry 3 --retry-delay 2 -o "$output" "$url"; then
+        debug_log "Attempting download: $url (attempt $((retry_count + 1)))"
+        if curl -fsSL --retry 3 --retry-delay 2 -o "$output" "$url"; then
+            debug_log "Download successful: $url"
             return 0
         fi
         ((retry_count++))
         log WARN "Download failed, attempt $retry_count of $max_retries"
         sleep 2
     done
-    return 1
-}
-
-install_binary() {
-    local name="$1"
-    local url="$2"
-    local bin_name="$3"
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    local success=false
-
-    log INFO "Installing $name from: $url"
-
-    (
-        cd "$tmpdir" || exit 1
-        if download_and_verify "$url" "${name}.archive"; then
-            case "$url" in
-                *.tar.gz)
-                    if tar xzf "${name}.archive"; then
-                        if [[ "$name" == "velero" ]]; then
-                            mv "velero-"*"/velero" "$HOME/.local/bin/velero"
-                        else
-                            find . -type f -name "$bin_name" -exec mv {} "$HOME/.local/bin/$bin_name" \;
-                        fi
-                        success=true
-                    fi
-                    ;;
-                *.zip)
-                    if unzip -q "${name}.archive"; then
-                        find . -type f -name "$bin_name" -exec mv {} "$HOME/.local/bin/$bin_name" \;
-                        success=true
-                    fi
-                    ;;
-            esac
-
-            if [[ "$success" == true ]]; then
-                chmod +x "$HOME/.local/bin/$bin_name"
-                if "$HOME/.local/bin/$bin_name" version >/dev/null 2>&1; then
-                    log INFO "Successfully installed $name"
-                    cleanup "$tmpdir"
-                    return 0
-                fi
-            fi
-        fi
-    )
     
-    cleanup "$tmpdir"
-    log ERROR "Failed to install $name"
+    log ERROR "Failed to download after $max_retries attempts: $url"
     return 1
 }
 
-get_latest_version() {
-    local repo="$1"
-    curl -sS "https://api.github.com/repos/${repo}/releases/latest" | 
-        grep -o '"tag_name": ".*"' | cut -d'"' -f4
+extract_archive() {
+    local archive="$1"
+    local type="$2"
+    local extract_dir="$3"
+
+    case "$type" in
+        tar.gz)
+            debug_log "Extracting tar.gz archive: $archive"
+            tar xzf "$archive" -C "$extract_dir"
+            ;;
+        zip)
+            debug_log "Extracting zip archive: $archive"
+            unzip -q "$archive" -d "$extract_dir"
+            ;;
+        *)
+            log ERROR "Unsupported archive type: $type"
+            return 1
+            ;;
+    esac
+
+    if [[ $? -ne 0 ]]; then
+        log ERROR "Failed to extract archive: $archive"
+        return 1
+    fi
+
+    return 0
+}
+
+install_tool() {
+    local name="$1"
+    local repo="$2"
+    local version="$3"
+    local pattern="$4"
+    local bin_name="$5"
+    local tmpdir
+    
+    tmpdir=$(mktemp -d)
+    trap 'cleanup "$tmpdir"' EXIT
+
+    log INFO "Installing $name $version"
+    
+    # Construct download URL
+    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+    debug_log "Download URL: $url"
+
+    # Create temporary directory for extraction
+    local extract_dir="$tmpdir/extract"
+    mkdir -p "$extract_dir"
+
+    # Download the archive
+    local archive_path="$tmpdir/${name}.archive"
+    if ! download_file "$url" "$archive_path"; then
+        return 1
+    fi
+
+    # Determine archive type and extract
+    local archive_type
+    if [[ $url == *.tar.gz ]]; then
+        archive_type="tar.gz"
+    elif [[ $url == *.zip ]]; then
+        archive_type="zip"
+    else
+        log ERROR "Unsupported archive format: $url"
+        return 1
+    fi
+
+    if ! extract_archive "$archive_path" "$archive_type" "$extract_dir"; then
+        return 1
+    fi
+
+    # Install binary
+    debug_log "Looking for binary: $bin_name in $extract_dir"
+    if [[ "$name" == "velero" ]]; then
+        # Special handling for Velero
+        local velero_dir
+        velero_dir=$(find "$extract_dir" -type d -name "velero-v*" -print -quit)
+        if [[ -z "$velero_dir" ]]; then
+            log ERROR "Could not find Velero directory in extracted archive"
+            return 1
+        fi
+        debug_log "Found Velero directory: $velero_dir"
+        cp "$velero_dir/velero" "$HOME/.local/bin/velero"
+    else
+        # Generic binary installation
+        local binary_path
+        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+        if [[ -z "$binary_path" ]]; then
+            log ERROR "Could not find binary $bin_name in extracted archive"
+            return 1
+        }
+        cp "$binary_path" "$HOME/.local/bin/$bin_name"
+    fi
+
+    chmod +x "$HOME/.local/bin/$bin_name"
+    
+    if verify_binary "$HOME/.local/bin/$bin_name" "$name"; then
+        log INFO "Successfully installed $name $version"
+        return 0
+    else
+        return 1
+    fi
 }
 
 install_tools() {
@@ -104,13 +194,11 @@ install_tools() {
     
     for tool in "${!TOOLS[@]}"; do
         if ! command -v "$tool" >/dev/null 2>&1; then
-            IFS=: read -r repo pattern bin_name <<< "${TOOLS[$tool]}"
-            version=$(get_latest_version "$repo")
-            [[ -z "$version" ]] && continue
-            
-            log INFO "Installing $tool ${version}"
-            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-            install_binary "$tool" "$url" "$bin_name"
+            IFS=: read -r repo version pattern bin_name <<< "${TOOLS[$tool]}"
+            if ! install_tool "$tool" "$repo" "$version" "$pattern" "$bin_name"; then
+                log ERROR "Failed to install $tool"
+                return 1
+            fi
         else
             log INFO "$tool is already installed"
         fi
@@ -154,17 +242,20 @@ setup_krew() {
     if ! command -v kubectl-krew >/dev/null 2>&1; then
         local tmpdir
         tmpdir=$(mktemp -d)
+        trap 'cleanup "$tmpdir"' EXIT
+        
         (
             cd "$tmpdir" || exit 1
-            curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz"
-            tar zxf "krew-linux_arm64.tar.gz"
+            if ! download_file "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz" "krew.tar.gz"; then
+                return 1
+            fi
+            tar zxf "krew.tar.gz"
             ./krew-linux_arm64 install krew
 
             export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
             kubectl krew install neat
             kubectl krew install image
         )
-        cleanup "$tmpdir"
     fi
 }
 
@@ -187,12 +278,17 @@ main() {
     setup_nix
     NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
     
-    install_tools
+    if ! install_tools; then
+        log ERROR "Tool installation failed"
+        exit 1
+    fi
+    
     update_paths
     setup_completions
     
-    [[ ! -d "$HOME/.zsh/pure" ]] &&
+    if [[ ! -d "$HOME/.zsh/pure" ]]; then
         git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
+    fi
     
     setup_krew
     
