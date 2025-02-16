@@ -173,6 +173,57 @@ install_velero() {
     return 1
 }
 
+install_velero() {
+    local name="velero"
+    local version="$1"
+    local tmpdir
+    
+    tmpdir=$(mktemp -d)
+    trap 'cleanup "$tmpdir"' EXIT
+
+    log INFO "Installing Velero $version"
+    
+    local url="https://github.com/vmware-tanzu/velero/releases/download/${version}/velero-${version#v}-linux-arm64.tar.gz"
+    debug_log "Download URL: $url"
+
+    local extract_dir="$tmpdir/extract"
+    mkdir -p "$extract_dir"
+
+    if ! download_file "$url" "$tmpdir/velero.tar.gz"; then
+        return 1
+    fi
+
+    if ! tar xzf "$tmpdir/velero.tar.gz" -C "$extract_dir"; then
+        log ERROR "Failed to extract Velero archive"
+        return 1
+    fi
+
+    local velero_dir
+    velero_dir=$(find "$extract_dir" -type d -name "velero-*" -print -quit)
+    if [[ ! -d "$velero_dir" ]]; then
+        log ERROR "Could not find Velero directory in extracted archive"
+        return 1
+    fi
+
+    debug_log "Found Velero directory: $velero_dir"
+    if [[ ! -f "$velero_dir/velero" ]]; then
+        log ERROR "Could not find velero binary in extracted directory"
+        return 1
+    fi
+
+    mkdir -p "$HOME/.local/bin"
+    cp "$velero_dir/velero" "$HOME/.local/bin/velero"
+    chmod +x "$HOME/.local/bin/velero"
+
+    if "$HOME/.local/bin/velero" version --client-only >/dev/null 2>&1; then
+        log INFO "Successfully installed Velero $version"
+        return 0
+    else
+        log ERROR "Failed to verify Velero installation"
+        return 1
+    fi
+}
+
 install_tool() {
     local name="$1"
     local repo="$2"
@@ -182,9 +233,12 @@ install_tool() {
     
     # Special handling for Velero
     if [[ "$name" == "velero" ]]; then
-        return $(install_velero "$version")
+        install_velero "$version"
+        return $?
     fi
-
+    
+    local tmpdir
+    
     local tmpdir
     tmpdir=$(mktemp -d)
     trap 'cleanup "$tmpdir"' EXIT
