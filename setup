@@ -20,11 +20,11 @@ readonly DIRS=(
 # Tool definitions with download patterns
 declare -A TOOLS=(
     ["velero"]="vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
-    ["vault"]="hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
+    ["vault"]="hashicorp/vault:vault_VERSION.zip:vault"
     ["pluto"]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
     ["argocd"]="argoproj/argo-cd:argocd-linux-arm64:argocd"
     ["argo"]="argoproj/argo-workflows:argo-linux-arm64.gz:argo"
-    ["rancher"]="rancher/cli:rancher-VERSION-linux-arm64.tar.gz:rancher"
+    ["rancher"]="rancher/cli:cli-VERSION-linux-arm64.tar.gz:rancher"
 )
 
 # Global cleanup array
@@ -138,6 +138,11 @@ extract_archive() {
             debug_log "Extracting zip archive: $archive"
             unzip -q "$archive" -d "$extract_dir"
             ;;
+        gz)
+            debug_log "Extracting gz archive: $archive"
+            gunzip -c "$archive" > "$extract_dir/$(basename "$archive" .gz)"
+            chmod +x "$extract_dir/$(basename "$archive" .gz)"
+            ;;
         *)
             log ERROR "Unsupported archive type: $type"
             return 1
@@ -164,7 +169,7 @@ install_tool() {
         install_velero "$version"
         return $?
     fi
-    
+
     local tmpdir
     tmpdir=$(mktemp -d)
     add_cleanup "$tmpdir"
@@ -191,6 +196,8 @@ install_tool() {
         archive_type="tar.gz"
     elif [[ $url == *.zip ]]; then
         archive_type="zip"
+    elif [[ $url == *.gz ]]; then
+        archive_type="gz"
     else
         log ERROR "Unsupported archive format: $url"
         return 1
@@ -203,7 +210,14 @@ install_tool() {
     # Install binary
     debug_log "Looking for binary: $bin_name in $extract_dir"
     local binary_path
-    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    
+    # For .gz files, we know exactly where the binary is
+    if [[ $archive_type == "gz" ]]; then
+        binary_path="$extract_dir/$(basename "$archive_path" .gz)"
+    else
+        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    fi
+
     if [[ -z "$binary_path" ]]; then
         log ERROR "Could not find binary $bin_name in extracted archive"
         return 1
