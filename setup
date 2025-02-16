@@ -54,7 +54,7 @@ verify_binary() {
     if [[ ! -x "$bin_path" ]]; then
         log ERROR "Binary $bin_path is not executable"
         return 1
-    }
+    fi
 
     # Try to run version check
     if ! "$bin_path" version >/dev/null 2>&1; then
@@ -106,7 +106,8 @@ extract_archive() {
             ;;
     esac
 
-    if [[ $? -ne 0 ]]; then
+    local extract_status=$?
+    if [[ $extract_status -ne 0 ]]; then
         log ERROR "Failed to extract archive: $archive"
         return 1
     fi
