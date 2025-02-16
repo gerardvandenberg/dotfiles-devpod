@@ -3,7 +3,7 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-v\${version}-linux-amd64.tar.gz:velero"
+    [velero]="vmware-tanzu/velero:velero-v\${version}-linux-arm64.tar.gz:velero"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
@@ -37,26 +37,18 @@ install_pluto() {
     tmpdir=$(mktemp -d)
     (
         cd "$tmpdir"
-        local url="https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64"
+        local url="https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64.tar.gz"
         log INFO "Downloading Pluto from: ${url}"
         
-        # Use -L to follow redirects and -f to fail silently
-        if ! curl -fsSL "$url" -o pluto; then
+        if ! curl -fsSL "$url" -o pluto.tar.gz; then
             log ERROR "Failed to download Pluto"
             return 1
         fi
         
-        # Verify download
-        if [ ! -f pluto ]; then
-            log ERROR "Failed to download Pluto binary"
-            return 1
-        fi
-        
-        log INFO "Downloaded Pluto binary size: $(wc -c < pluto) bytes"
+        tar xzf pluto.tar.gz
         chmod +x pluto
         mv pluto "$HOME/.local/bin/pluto"
         
-        # Verify installation
         if "$HOME/.local/bin/pluto" version >/dev/null 2>&1; then
             log INFO "Successfully installed Pluto ${version}"
         else
