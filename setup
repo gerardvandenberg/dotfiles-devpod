@@ -2,10 +2,6 @@
 
 set -euo pipefail
 
-declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-v1.15.2-linux-arm64.tar.gz:velero"
-)
-
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
 
 log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
@@ -24,6 +20,38 @@ install_vault() {
         unzip -q "vault_${version#v}_linux_arm64.zip"
         chmod +x vault
         mv vault "$HOME/.local/bin/vault"
+    )
+    rm -rf "$tmpdir"
+}
+
+install_velero() {
+    local version
+    version=$(curl -sS "https://api.github.com/repos/vmware-tanzu/velero/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    log INFO "Installing Velero ${version}"
+    
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    (
+        cd "$tmpdir"
+        local url="https://github.com/vmware-tanzu/velero/releases/download/${version}/velero-v${version#v}-linux-arm64.tar.gz"
+        log INFO "Downloading Velero from: ${url}"
+        
+        if ! curl -fsSL "$url" -o velero.tar.gz; then
+            log ERROR "Failed to download Velero"
+            return 1
+        fi
+        
+        tar xzf velero.tar.gz
+        cd velero-v*
+        chmod +x velero
+        mv velero "$HOME/.local/bin/velero"
+        
+        if "$HOME/.local/bin/velero" version >/dev/null 2>&1; then
+            log INFO "Successfully installed Velero ${version}"
+        else
+            log ERROR "Failed to verify Velero installation"
+            return 1
+        fi
     )
     rm -rf "$tmpdir"
 }
