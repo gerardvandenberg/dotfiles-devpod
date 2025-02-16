@@ -3,7 +3,7 @@
 set -euo pipefail
 
 declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-VERSION-linux-arm64.tar.gz:velero"
+    [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
