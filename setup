@@ -54,7 +54,7 @@ verify_binary() {
     if [[ ! -x "$bin_path" ]]; then
         log ERROR "Binary $bin_path is not executable"
         return 1
-    }
+    fi
 
     # Try to run version check
     if ! "$bin_path" version >/dev/null 2>&1; then
