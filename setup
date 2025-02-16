@@ -2,244 +2,142 @@
 
 set -euo pipefail
 
-readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
+# Global variables
+readonly DIRS=(
+    "$HOME/.config"
+    "$HOME/.config/nixpkgs"
+    "$HOME/.zsh"
+    "$HOME/.local/bin"
+    "$HOME/.zfunc"
+    "$HOME/.krew/bin"
+)
 
-log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
+# Tool definitions
+declare -A TOOLS=(
+    ["velero"]="vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
+    ["vault"]="hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
+    ["pluto"]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
+)
 
-install_vault() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/hashicorp/vault/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Installing Vault ${version}"
-    
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    (
-        cd "$tmpdir"
-        log INFO "Downloading Vault from: https://releases.hashicorp.com/vault/${version#v}/vault_${version#v}_linux_arm64.zip"
-        curl -sSLO "https://releases.hashicorp.com/vault/${version#v}/vault_${version#v}_linux_arm64.zip"
-        unzip -q "vault_${version#v}_linux_arm64.zip"
-        chmod +x vault
-        mv vault "$HOME/.local/bin/vault"
-    )
-    rm -rf "$tmpdir"
+log() {
+    printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"
 }
 
-install_velero() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/vmware-tanzu/velero/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Installing Velero ${version}"
-    
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    (
-        cd "$tmpdir"
-        local url="https://github.com/vmware-tanzu/velero/releases/download/${version}/velero-v${version#v}-linux-arm64.tar.gz"
-        log INFO "Downloading Velero from: ${url}"
-        
-        if ! curl -fsSL "$url" -o velero.tar.gz; then
-            log ERROR "Failed to download Velero"
-            return 1
+cleanup() {
+    local dir_to_cleanup="$1"
+    [[ -d "$dir_to_cleanup" ]] && rm -rf "$dir_to_cleanup"
+}
+
+download_and_verify() {
+    local url="$1"
+    local output="$2"
+    local max_retries=3
+    local retry_count=0
+
+    while [[ $retry_count -lt $max_retries ]]; do
+        if curl -sSL --retry 3 --retry-delay 2 -o "$output" "$url"; then
+            return 0
         fi
-        
-        tar xzf velero.tar.gz
-        cd velero-v*
-        chmod +x velero
-        mv velero "$HOME/.local/bin/velero"
-        
-        if "$HOME/.local/bin/velero" version >/dev/null 2>&1; then
-            log INFO "Successfully installed Velero ${version}"
-        else
-            log ERROR "Failed to verify Velero installation"
-            return 1
-        fi
-    )
-    rm -rf "$tmpdir"
+        ((retry_count++))
+        log WARN "Download failed, attempt $retry_count of $max_retries"
+        sleep 2
+    done
+    return 1
 }
 
-install_pluto() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/FairwindsOps/pluto/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Installing Pluto ${version}"
-    
+install_binary() {
+    local name="$1"
+    local url="$2"
+    local bin_name="$3"
     local tmpdir
     tmpdir=$(mktemp -d)
+    local success=false
+
+    log INFO "Installing $name from: $url"
+
     (
-        cd "$tmpdir"
-        local url="https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64.tar.gz"
-        log INFO "Downloading Pluto from: ${url}"
-        
-        if ! curl -fsSL "$url" -o pluto.tar.gz; then
-            log ERROR "Failed to download Pluto"
-            return 1
+        cd "$tmpdir" || exit 1
+        if download_and_verify "$url" "${name}.archive"; then
+            case "$url" in
+                *.tar.gz)
+                    if tar xzf "${name}.archive"; then
+                        if [[ "$name" == "velero" ]]; then
+                            mv "velero-"*"/velero" "$HOME/.local/bin/velero"
+                        else
+                            find . -type f -name "$bin_name" -exec mv {} "$HOME/.local/bin/$bin_name" \;
+                        fi
+                        success=true
+                    fi
+                    ;;
+                *.zip)
+                    if unzip -q "${name}.archive"; then
+                        find . -type f -name "$bin_name" -exec mv {} "$HOME/.local/bin/$bin_name" \;
+                        success=true
+                    fi
+                    ;;
+            esac
+
+            if [[ "$success" == true ]]; then
+                chmod +x "$HOME/.local/bin/$bin_name"
+                if "$HOME/.local/bin/$bin_name" version >/dev/null 2>&1; then
+                    log INFO "Successfully installed $name"
+                    cleanup "$tmpdir"
+                    return 0
+                fi
+            fi
         fi
-        
-        tar xzf pluto.tar.gz
-        chmod +x pluto
-        mv pluto "$HOME/.local/bin/pluto"
-        
-        if "$HOME/.local/bin/pluto" version >/dev/null 2>&1; then
-            log INFO "Successfully installed Pluto ${version}"
-        else
-            log ERROR "Failed to verify Pluto installation"
-            return 1
-        fi
     )
-    rm -rf "$tmpdir"
-}
-
-install_argocd() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/argoproj/argo-cd/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Installing ArgoCD CLI ${version}"
-    curl -sSL -o "$HOME/.local/bin/argocd" "https://github.com/argoproj/argo-cd/releases/download/${version}/argocd-linux-arm64"
-    chmod +x "$HOME/.local/bin/argocd"
-}
-
-install_argo() {
-    local version
-    version=$(curl -sS "https://api.github.com/repos/argoproj/argo-workflows/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Installing Argo Workflows CLI ${version}"
     
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    (
-        cd "$tmpdir"
-        curl -sSL "https://github.com/argoproj/argo-workflows/releases/download/${version}/argo-linux-arm64.gz" -o argo.gz
-        gunzip argo.gz
-        chmod +x argo
-        mv argo "$HOME/.local/bin/argo"
-    )
-    rm -rf "$tmpdir"
+    cleanup "$tmpdir"
+    log ERROR "Failed to install $name"
+    return 1
 }
 
-install_rancher_cli() {
-    if ! command -v go &>/dev/null; then
-        log INFO "Installing Go"
-        NIXPKGS_ALLOW_UNFREE=1 nix-env -iA nixpkgs.go
-        export PATH="$HOME/.nix-profile/bin:$PATH"
-    fi
-
-    local version
-    version=$(curl -sS "https://api.github.com/repos/rancher/cli/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    log INFO "Building Rancher CLI ${version}"
-    
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    (
-        cd "$tmpdir"
-        curl -sfL "https://github.com/rancher/cli/archive/refs/tags/${version}.tar.gz" -o rancher-cli.tar.gz
-        tar xzf rancher-cli.tar.gz
-        cd "cli-${version#v}"
-        GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${version}" -o rancher
-        mv rancher "$HOME/.local/bin/rancher"
-        chmod +x "$HOME/.local/bin/rancher"
-    )
-    rm -rf "$tmpdir"
+get_latest_version() {
+    local repo="$1"
+    curl -sS "https://api.github.com/repos/${repo}/releases/latest" | 
+        grep -o '"tag_name": ".*"' | cut -d'"' -f4
 }
 
 install_tools() {
     mkdir -p "$HOME/.local/bin"
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    trap 'rm -rf "$tmpdir"' EXIT
     
     for tool in "${!TOOLS[@]}"; do
-        IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
-        if ! command -v "$bin" >/dev/null 2>&1; then
-            log INFO "Installing $tool"
-            version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-            log INFO "Latest version: $version"
-            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-            log INFO "Downloading from: $url"
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            IFS=: read -r repo pattern bin_name <<< "${TOOLS[$tool]}"
+            version=$(get_latest_version "$repo")
+            [[ -z "$version" ]] && continue
             
-            # Download the archive
-            local archive="$tmpdir/${tool}.archive"
-            if curl -sSL -o "$archive" "$url"; then
-                log INFO "Download completed for ${tool}, attempting extraction"
-                case "$url" in
-                    *.tar.gz)
-                        tar xvf "$archive" -C "$tmpdir" || {
-                            log ERROR "Failed to extract $archive"
-                            continue
-                        }
-                        # List contents after extraction
-                        log INFO "Contents after extraction:"
-                        ls -R "$tmpdir"
-                        
-                        # For Velero specifically, it's in a versioned subdirectory
-                        if [ "$tool" = "velero" ]; then
-                            mv "$tmpdir"/velero-v*/velero "$HOME/.local/bin/velero" || {
-                                log ERROR "Failed to move velero binary"
-                                continue
-                            }
-                        else
-                            find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-                        fi
-                        ;;
-                    *.zip)
-                        unzip -q "$archive" -d "$tmpdir" || {
-                            log ERROR "Failed to extract $archive"
-                            continue
-                        }
-                        find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-                        ;;
-                esac
-                
-                chmod +x "$HOME/.local/bin/$bin"
-                if [ -x "$HOME/.local/bin/$bin" ]; then
-                    log INFO "Successfully installed $tool"
-                else
-                    log ERROR "Failed to make $tool executable"
-                fi
-            else
-                log ERROR "Failed to download $url"
-            fi
+            log INFO "Installing $tool ${version}"
+            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+            install_binary "$tool" "$url" "$bin_name"
         else
             log INFO "$tool is already installed"
         fi
     done
-    if ! command -v velero >/dev/null 2>&1; then
-        install_velero
-    fi
-    if ! command -v vault >/dev/null 2>&1; then
-        install_vault
-    fi
-
-    if ! command -v pluto >/dev/null 2>&1; then
-        install_pluto
-    fi
-
-    if ! command -v argocd >/dev/null 2>&1; then
-        install_argocd
-    fi
-
-    if ! command -v argo >/dev/null 2>&1; then
-        install_argo
-    fi
-
-    if ! command -v rancher >/dev/null 2>&1; then
-        install_rancher_cli
-    fi
 }
 
 setup_nix() {
-    [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]] && {
+    if [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]]; then
         nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
         nix-channel --update
-    }
+    fi
 }
 
 update_paths() {
-    local config
+    local path_entries=(
+        'export PATH="$HOME/.nix-profile/bin:$PATH"'
+        'export PATH="$HOME/.local/bin:$PATH"'
+        'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"'
+    )
+    
     for config in "$HOME/.bashrc" "$HOME/.zshrc"; do
         [[ -f "$config" ]] || continue
-        grep -q 'export PATH="$HOME/.nix-profile/bin:$PATH"' "$config" || 
-            echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$config"
-        grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$config" ||
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$config"
-        grep -q 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' "$config" ||
-            echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$config"
+        for entry in "${path_entries[@]}"; do
+            grep -q "$entry" "$config" || echo "$entry" >> "$config"
+        done
     done
+    
     export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
 }
 
@@ -252,6 +150,24 @@ setup_completions() {
     done
 }
 
+setup_krew() {
+    if ! command -v kubectl-krew >/dev/null 2>&1; then
+        local tmpdir
+        tmpdir=$(mktemp -d)
+        (
+            cd "$tmpdir" || exit 1
+            curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz"
+            tar zxf "krew-linux_arm64.tar.gz"
+            ./krew-linux_arm64 install krew
+
+            export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+            kubectl krew install neat
+            kubectl krew install image
+        )
+        cleanup "$tmpdir"
+    fi
+}
+
 main() {
     local start_time=$SECONDS
     
@@ -259,15 +175,14 @@ main() {
     mkdir -p "${DIRS[@]}"
     
     # Set up XDG_CONFIG_HOME
-    export XDG_CONFIG_HOME="$HOME"/.config
-    mkdir -p "$XDG_CONFIG_HOME"
-    mkdir -p "$XDG_CONFIG_HOME"/nixpkgs
+    export XDG_CONFIG_HOME="$HOME/.config"
+    mkdir -p "$XDG_CONFIG_HOME/nixpkgs"
     
-    # Create symlinks for existing configurations
-    ln -sf "$PWD/nvim" "$XDG_CONFIG_HOME"/nvim
-    ln -sf "$PWD/.inputrc" "$HOME"/.inputrc
-    ln -sf "$PWD/.tmux.conf" "$HOME"/.tmux.conf
-    ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME"/nixpkgs/config.nix
+    # Create symlinks
+    ln -sf "$PWD/nvim" "$XDG_CONFIG_HOME/nvim"
+    ln -sf "$PWD/.inputrc" "$HOME/.inputrc"
+    ln -sf "$PWD/.tmux.conf" "$HOME/.tmux.conf"
+    ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME/nixpkgs/config.nix"
     
     setup_nix
     NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
@@ -279,19 +194,7 @@ main() {
     [[ ! -d "$HOME/.zsh/pure" ]] &&
         git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
     
-    if ! command -v kubectl-krew >/dev/null 2>&1; then
-        (
-            cd "$(mktemp -d)" || exit 1
-            curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz"
-            tar zxf "krew-linux_arm64.tar.gz"
-            ./krew-linux_arm64 install krew
-
-            # Add Krew to path temporarily for plugin installation
-            export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
-            kubectl krew install neat
-            kubectl krew install image
-        )
-    fi
+    setup_krew
     
     touch "$HOME/.privaterc"
     log INFO "Setup completed in $((SECONDS - start_time)) seconds"
