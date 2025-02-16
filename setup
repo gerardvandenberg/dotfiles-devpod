@@ -130,24 +130,32 @@ install_tools() {
                 log INFO "Download completed for ${tool}, attempting extraction"
                 case "$url" in
                     *.tar.gz)
-                        tar xzvf "$archive" -C "$tmpdir" || {
+                        tar xvf "$archive" -C "$tmpdir" || {
                             log ERROR "Failed to extract $archive"
                             continue
                         }
+                        # List contents after extraction
+                        log INFO "Contents after extraction:"
+                        ls -R "$tmpdir"
+                        
+                        # For Velero specifically, it's in a versioned subdirectory
+                        if [ "$tool" = "velero" ]; then
+                            mv "$tmpdir"/velero-v*/velero "$HOME/.local/bin/velero" || {
+                                log ERROR "Failed to move velero binary"
+                                continue
+                            }
+                        else
+                            find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
+                        fi
                         ;;
                     *.zip)
                         unzip -q "$archive" -d "$tmpdir" || {
                             log ERROR "Failed to extract $archive"
                             continue
                         }
+                        find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
                         ;;
                 esac
-                
-                # Find and move the binary
-                if ! find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;; then
-                    log ERROR "Could not find binary $bin in extracted files"
-                    continue
-                fi
                 
                 chmod +x "$HOME/.local/bin/$bin"
                 if [ -x "$HOME/.local/bin/$bin" ]; then
@@ -162,7 +170,6 @@ install_tools() {
             log INFO "$tool is already installed"
         fi
     done
-
     if ! command -v vault >/dev/null 2>&1; then
         install_vault
     fi
