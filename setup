@@ -4,6 +4,7 @@ set -euo pipefail
 
 declare -A TOOLS=(
     [velero]="vmware-tanzu/velero:velero-VERSION-linux-amd64.tar.gz:velero"
+    [vault]="hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
 )
 
 readonly DIRS=("$HOME/.config" "$HOME/.config/nixpkgs" "$HOME/.zsh" "$HOME/.local/bin" "$HOME/.zfunc" "$HOME/.krew/bin")
@@ -80,9 +81,19 @@ install_tools() {
             log INFO "Installing $tool"
             version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
             log INFO "Latest version: $version"
-            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version}}"
-            if curl -sSL -o "$tmpdir/${tool}.tar.gz" "$url"; then
-                tar xzf "$tmpdir/${tool}.tar.gz" -C "$tmpdir" || continue
+            url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+            
+            # Download the archive
+            local archive="$tmpdir/${tool}.archive"
+            if curl -sSL -o "$archive" "$url"; then
+                case "$url" in
+                    *.tar.gz)
+                        tar xzf "$archive" -C "$tmpdir" || continue
+                        ;;
+                    *.zip)
+                        unzip -q "$archive" -d "$tmpdir" || continue
+                        ;;
+                esac
                 find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
                 chmod +x "$HOME/.local/bin/$bin"
             fi
@@ -100,6 +111,10 @@ install_tools() {
     if ! command -v rancher >/dev/null 2>&1; then
         install_rancher_cli
     fi
+
+    if ! command -v pluto >/dev/null 2>&1; then
+        install_pluto
+    fi
 }
 
 setup_nix() {
@@ -107,8 +122,6 @@ setup_nix() {
         nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
         nix-channel --update
     }
-    mkdir -p "$HOME/.config/nixpkgs"
-    [[ -f "$PWD/config.nix" ]] && ln -sf "$PWD/config.nix" "$HOME/.config/nixpkgs/config.nix"
 }
 
 update_paths() {
@@ -127,7 +140,7 @@ update_paths() {
 
 setup_completions() {
     mkdir -p "$HOME/.zfunc"
-    for cmd in kubectl helm argocd argo velero rancher pluto; do
+    for cmd in kubectl helm argocd argo velero rancher pluto vault; do
         if command -v "$cmd" >/dev/null 2>&1; then
             "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
         fi
@@ -140,7 +153,7 @@ main() {
     log INFO "Starting setup"
     mkdir -p "${DIRS[@]}"
     
-    # Add the XDG config setup here
+    # Set up XDG_CONFIG_HOME
     export XDG_CONFIG_HOME="$HOME"/.config
     mkdir -p "$XDG_CONFIG_HOME"
     mkdir -p "$XDG_CONFIG_HOME"/nixpkgs
