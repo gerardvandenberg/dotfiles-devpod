@@ -17,11 +17,14 @@ readonly DIRS=(
     "$HOME/.krew/bin"
 )
 
-# Tool definitions with explicit versions
+# Tool definitions with download patterns
 declare -A TOOLS=(
-    ["velero"]="vmware-tanzu/velero:v1.12.0:velero-vVERSION-linux-arm64.tar.gz:velero"
-    ["vault"]="hashicorp/vault:v1.13.0:vault_VERSION_linux_arm64.zip:vault"
-    ["pluto"]="FairwindsOps/pluto:v5.16.1:pluto_VERSION_linux_arm64.tar.gz:pluto"
+    ["velero"]="vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
+    ["vault"]="hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
+    ["pluto"]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
+    ["argocd"]="argoproj/argo-cd:argocd-linux-arm64:argocd"
+    ["argo"]="argoproj/argo-workflows:argo-linux-arm64.gz:argo"
+    ["rancher"]="rancher/cli:rancher-VERSION-linux-arm64.tar.gz:rancher"
 )
 
 log() {
@@ -134,7 +137,7 @@ install_velero() {
 
     log INFO "Installing Velero $version"
     
-    local url="https://github.com/vmware-tanzu/velero/releases/download/${version}/velero-${version#v}-linux-arm64.tar.gz"
+    local url="https://github.com/vmware-tanzu/velero/releases/download/${version}/velero-${version}-linux-arm64.tar.gz"
     debug_log "Download URL: $url"
 
     local extract_dir="$tmpdir/extract"
@@ -299,7 +302,13 @@ install_tools() {
     
     for tool in "${!TOOLS[@]}"; do
         if ! command -v "$tool" >/dev/null 2>&1; then
-            IFS=: read -r repo version pattern bin_name <<< "${TOOLS[$tool]}"
+            IFS=: read -r repo pattern bin_name <<< "${TOOLS[$tool]}"
+            version=$(get_latest_version "$repo")
+            if [[ -z "$version" ]]; then
+                log ERROR "Failed to get latest version for $tool"
+                continue
+            fi
+            log INFO "Installing $tool version $version"
             if ! install_tool "$tool" "$repo" "$version" "$pattern" "$bin_name"; then
                 log ERROR "Failed to install $tool"
                 return 1
