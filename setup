@@ -198,6 +198,9 @@ install_tools() {
             log INFO "$tool is already installed"
         fi
     done
+    if ! command -v velero >/dev/null 2>&1; then
+        install_velero
+    fi
     if ! command -v vault >/dev/null 2>&1; then
         install_vault
     fi
