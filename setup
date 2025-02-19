@@ -101,6 +101,15 @@ verify_binary() {
                 return 1
             fi
             ;;
+        pluto)
+            # Pluto supports version flag but outputs to stderr
+            if "$bin" version 2>&1 | grep -q "Version:"; then
+                return 0
+            else
+                log ERROR "Failed to verify $name installation"
+                return 1
+            fi
+            ;;
         *)
             if ! "$bin" version 2>/dev/null || ! "$bin" --version 2>/dev/null; then
                 log ERROR "Failed to verify $name installation"
