@@ -51,22 +51,21 @@ extract_archive() {
     case "$type" in
         tar.gz) 
             tar xzf "$archive" -C "$extract_dir"
-            log INFO "Extracted tar.gz contents:"
-            find "$extract_dir" -type f -ls
             ;;
         zip)
             unzip -q "$archive" -d "$extract_dir"
-            log INFO "Extracted zip contents:"
-            find "$extract_dir" -type f -ls
             ;;
         gz)
             local output_file="$extract_dir/$(basename "$archive" .gz)"
             gunzip -c "$archive" > "$output_file"
             chmod +x "$output_file"
-            log INFO "Extracted gz to: $output_file"
             ;;
         *) log ERROR "Unsupported archive type: $type"; return 1 ;;
     esac
+    
+    # Log contents for debugging
+    log INFO "Extracted contents:"
+    find "$extract_dir" -type f -ls
 }
 
 get_latest_version() {
@@ -107,21 +106,14 @@ verify_binary() {
 find_binary() {
     local extract_dir="$1" bin_name="$2"
     log INFO "Searching for binary $bin_name in $extract_dir"
-    # List all files for debugging
-    find "$extract_dir" -type f -ls
     
     # First try exact name match
     local binary_path
-    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -exec readlink -f {} \; -print -quit)
     
-    # If not found, try searching in subdirectories
+    # If not found, try searching in subdirectories recursively
     if [[ -z "$binary_path" ]]; then
-        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
-    fi
-    
-    # If still not found, try case-insensitive search
-    if [[ -z "$binary_path" ]]; then
-        binary_path=$(find "$extract_dir" -type f -iname "$bin_name" -print -quit)
+        binary_path=$(find "$extract_dir" -type f -iname "$bin_name" -exec readlink -f {} \; -print -quit)
     fi
     
     if [[ -z "$binary_path" ]]; then
@@ -129,6 +121,13 @@ find_binary() {
         return 1
     fi
     
+    # Verify the binary exists and is a file
+    if [[ ! -f "$binary_path" ]]; then
+        log ERROR "Found path is not a valid file: $binary_path"
+        return 1
+    }
+    
+    log INFO "Found binary at: $binary_path"
     echo "$binary_path"
 }
 
@@ -161,7 +160,7 @@ install_tool() {
     binary_path=$(find_binary "$extract_dir" "$bin_name") || return 1
     
     log INFO "Moving binary from $binary_path to $HOME/.local/bin/$bin_name"
-    mv "$binary_path" "$HOME/.local/bin/$bin_name"
+    install -m 755 "$binary_path" "$HOME/.local/bin/$bin_name"
     verify_binary "$HOME/.local/bin/$bin_name" "$name"
 }
 
