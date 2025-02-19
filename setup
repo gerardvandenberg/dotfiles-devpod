@@ -64,10 +64,6 @@ extract_archive() {
             ;;
         *) log ERROR "Unsupported archive type: $type"; return 1 ;;
     esac
-    
-    # Log contents for debugging
-    log INFO "Extracted contents:"
-    find "$extract_dir" -type f -ls
 }
 
 get_latest_version() {
@@ -109,28 +105,34 @@ find_binary() {
     local extract_dir="$1" bin_name="$2"
     log INFO "Searching for binary $bin_name in $extract_dir"
     
-    # First try exact name match
+    # First try direct path in known subdirectory pattern
+    local version_dir
+    version_dir=$(find "$extract_dir" -type d -name "*linux-arm64" -print -quit)
+    if [[ -n "$version_dir" ]] && [[ -f "$version_dir/$bin_name" ]]; then
+        log INFO "Found binary in version directory: $version_dir/$bin_name"
+        echo "$version_dir/$bin_name"
+        return 0
+    fi
+    
+    # Fallback to recursive search
     local binary_path
-    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -exec readlink -f {} \; -print -quit)
-    
-    # If not found, try searching in subdirectories recursively
-    if [[ -z "$binary_path" ]]; then
-        binary_path=$(find "$extract_dir" -type f -iname "$bin_name" -exec readlink -f {} \; -print -quit)
+    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    if [[ -n "$binary_path" ]]; then
+        log INFO "Found binary at: $binary_path"
+        echo "$binary_path"
+        return 0
     fi
     
-    if [[ -z "$binary_path" ]]; then
-        log ERROR "Binary not found after searching"
-        return 1
+    # If still not found, try case-insensitive search
+    binary_path=$(find "$extract_dir" -type f -iname "$bin_name" -print -quit)
+    if [[ -n "$binary_path" ]]; then
+        log INFO "Found binary (case-insensitive) at: $binary_path"
+        echo "$binary_path"
+        return 0
     fi
     
-    # Verify the binary exists and is a file
-    if [[ ! -f "$binary_path" ]]; then
-        log ERROR "Found path is not a valid file: $binary_path"
-        return 1
-    fi
-    
-    log INFO "Found binary at: $binary_path"
-    echo "$binary_path"
+    log ERROR "Binary not found after searching"
+    return 1
 }
 
 install_tool() {
@@ -149,19 +151,16 @@ install_tool() {
     local extract_dir="$TMPDIR/extract"
     mkdir -p "$extract_dir"
     
-    # Download the file
+    # Download and extract
     download_file "$url" "$archive" || return 1
-    
-    # Determine the file type and extract accordingly
     local file_type
     file_type=$(get_file_type "$url")
     extract_archive "$archive" "$file_type" "$extract_dir" || return 1
     
-    # Find the binary
+    # Find and install binary
     local binary_path
     binary_path=$(find_binary "$extract_dir" "$bin_name") || return 1
-    
-    log INFO "Moving binary from $binary_path to $HOME/.local/bin/$bin_name"
+    log INFO "Installing binary from $binary_path to $HOME/.local/bin/$bin_name"
     install -m 755 "$binary_path" "$HOME/.local/bin/$bin_name"
     verify_binary "$HOME/.local/bin/$bin_name" "$name"
 }
