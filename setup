@@ -9,7 +9,7 @@ readonly TOOLS=(
     "velero:vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
     "vault:hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
     "pluto:FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
-    "argocd:argoproj/argo-cd:argocd-linux-arm64:argocd"
+    "argocd:argoproj/argo-cd:argocd-linux-arm64:argocd:binary"
     "argo:argoproj/argo-workflows:argo-linux-arm64.gz:argo"
     "rancher:rancher/cli:cli-VERSION-linux-arm64.tar.gz:rancher"
 )
@@ -51,7 +51,7 @@ get_file_type() {
     elif [[ "$filename" == *.gz ]]; then
         echo "gz"
     else
-        echo "unknown"
+        echo "binary"
     fi
 }
 
@@ -69,6 +69,12 @@ extract_archive() {
         gz)
             local output_file="$extract_dir/$(basename "$archive" .gz)"
             gunzip -c "$archive" > "$output_file"
+            chmod +x "$output_file"
+            ;;
+        binary)
+            # For direct binary downloads, just copy to extract dir
+            local output_file="$extract_dir/$(basename "$archive")"
+            cp "$archive" "$output_file"
             chmod +x "$output_file"
             ;;
         *) log ERROR "Unsupported archive type: $type"; return 1 ;;
@@ -154,7 +160,7 @@ find_binary() {
 }
 
 install_tool() {
-    local name="$1" repo="$2" pattern="$3" bin_name="$4"
+    local name="$1" repo="$2" pattern="$3" bin_name="$4" type="${5:-archive}"
     TMPDIR="$(mktemp -d)"
     log INFO "Installing $name"
     
@@ -186,7 +192,12 @@ install_tool() {
     fi
     
     local file_type
-    file_type=$(get_file_type "$url")
+    if [[ "$type" == "binary" ]]; then
+        file_type="binary"
+    else
+        file_type=$(get_file_type "$url")
+    fi
+    
     extract_archive "$archive" "$file_type" "$extract_dir" || return 1
     
     # Find and install binary
@@ -202,11 +213,11 @@ main() {
     mkdir -p "${DIRS[@]}"
     
     for tool_info in "${TOOLS[@]}"; do
-        IFS=: read -r name repo pattern bin_name <<< "$tool_info"
+        IFS=: read -r name repo pattern bin_name type <<< "$tool_info"
         if [[ -x "$HOME/.local/bin/$bin_name" ]]; then
             log INFO "Binary $bin_name already installed"
         else
-            install_tool "$name" "$repo" "$pattern" "$bin_name" || {
+            install_tool "$name" "$repo" "$pattern" "$bin_name" "${type:-archive}" || {
                 log ERROR "Failed to install $name"
                 return 1
             }
