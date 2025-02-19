@@ -21,7 +21,9 @@ log() {
 }
 
 cleanup() {
-    [[ -d "$TMPDIR" ]] && rm -rf "$TMPDIR"
+    if [ -n "${TMPDIR:-}" ] && [ -d "$TMPDIR" ]; then
+        rm -rf "$TMPDIR"
+    fi
 }
 trap cleanup EXIT
 
@@ -125,7 +127,7 @@ find_binary() {
     if [[ ! -f "$binary_path" ]]; then
         log ERROR "Found path is not a valid file: $binary_path"
         return 1
-    }
+    fi
     
     log INFO "Found binary at: $binary_path"
     echo "$binary_path"
@@ -133,7 +135,7 @@ find_binary() {
 
 install_tool() {
     local name="$1" repo="$2" pattern="$3" bin_name="$4"
-    TMPDIR=$(mktemp -d)
+    TMPDIR="$(mktemp -d)"
     log INFO "Installing $name"
     
     local version
