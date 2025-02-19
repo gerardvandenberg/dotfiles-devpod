@@ -7,7 +7,7 @@ set -euo pipefail
 readonly DIRS=("$HOME/.config" "$HOME/.local/bin")
 readonly TOOLS=(
     "velero:vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
-    "vault:hashicorp/vault:vault_VERSION.zip:vault"
+    "vault:hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
     "pluto:FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
     "argocd:argoproj/argo-cd:argocd-linux-arm64:argocd"
     "argo:argoproj/argo-workflows:argo-linux-arm64.gz:argo"
@@ -30,7 +30,16 @@ trap cleanup EXIT
 download_file() {
     local url="$1" output="$2"
     log INFO "Downloading from: $url"
-    curl -fsSL --retry 3 --retry-delay 2 -o "$output" "$url"
+    local http_code
+    http_code=$(curl -fsSL --retry 3 --retry-delay 2 -w "%{http_code}" -o "$output" "$url" || echo "$?")
+    
+    if [[ "$http_code" == "404" ]]; then
+        log ERROR "URL not found (404): $url"
+        return 1
+    elif [[ "$http_code" != "200" ]]; then
+        log ERROR "Failed to download with code $http_code: $url"
+        return 1
+    fi
 }
 
 get_file_type() {
@@ -152,7 +161,21 @@ install_tool() {
     mkdir -p "$extract_dir"
     
     # Download and extract
-    download_file "$url" "$archive" || return 1
+    if ! download_file "$url" "$archive"; then
+        # If primary URL fails, try alternative patterns for some tools
+        case "$name" in
+            vault)
+                # Try alternate Vault URL pattern
+                url="https://releases.hashicorp.com/vault/${version}/vault_${version}_linux_arm64.zip"
+                log INFO "Trying alternate URL: $url"
+                download_file "$url" "$archive" || return 1
+                ;;
+            *)
+                return 1
+                ;;
+        esac
+    fi
+    
     local file_type
     file_type=$(get_file_type "$url")
     extract_archive "$archive" "$file_type" "$extract_dir" || return 1
