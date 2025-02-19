@@ -7,7 +7,7 @@ set -euo pipefail
 readonly DIRS=("$HOME/.config" "$HOME/.local/bin")
 readonly TOOLS=(
     "velero:vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
-    "vault:hashicorp/vault:releases.hashicorp.com/vault/VERSION/vault_VERSION_linux_arm64.zip:vault"
+    "vault:hashicorp/vault:direct:vault"
     "pluto:FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
     "argocd:argoproj/argo-cd:argocd-linux-arm64:argocd:binary"
     "argo:argoproj/argo-workflows:argo-linux-arm64.gz:argo"
@@ -168,11 +168,14 @@ install_tool() {
     
     # Construct URL based on the pattern
     local url
-    if [[ "$pattern" == *"releases.hashicorp.com"* ]]; then
-        url="https://${pattern/VERSION/${version}}"
-    else
-        url="https://github.com/${repo}/releases/download/v${version}/${pattern/VERSION/${version}}"
-    fi
+    case "$name" in
+        vault)
+            url="https://releases.hashicorp.com/vault/${version}/vault_${version}_linux_arm64.zip"
+            ;;
+        *)
+            url="https://github.com/${repo}/releases/download/v${version}/${pattern/VERSION/${version}}"
+            ;;
+    esac
     log INFO "Download URL: $url"
     
     local archive="$TMPDIR/$name.archive"
