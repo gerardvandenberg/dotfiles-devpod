@@ -1,262 +1,111 @@
 #!/bin/bash
-
 set -euo pipefail
+# Enable debug mode
+[[ "${DEBUG:-false}" == "true" ]] && set -x
 
-# Enable debug mode for more detailed output
-if [[ "${DEBUG:-false}" == "true" ]]; then
-    set -x
-fi
-
-# Global constants
-readonly DIRS=(
-    "$HOME/.config"
-    "$HOME/.config/nixpkgs"
-    "$HOME/.zsh"
-    "$HOME/.local/bin"
-    "$HOME/.zfunc"
-    "$HOME/.krew/bin"
+# Constants
+readonly DIRS=("$HOME/.config" "$HOME/.local/bin")
+readonly TOOLS=(
+    "velero:vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
+    "vault:hashicorp/vault:vault_VERSION.zip:vault"
+    "pluto:FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
+    "argocd:argoproj/argo-cd:argocd-linux-arm64:argocd"
+    "argo:argoproj/argo-workflows:argo-linux-arm64.gz:argo"
+    "rancher:rancher/cli:cli-VERSION-linux-arm64.tar.gz:rancher"
 )
 
-# Tool definitions with download patterns
-declare -A TOOLS=(
-    ["velero"]="vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
-    ["vault"]="hashicorp/vault:vault_VERSION.zip:vault"
-    ["pluto"]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
-    ["argocd"]="argoproj/argo-cd:argocd-linux-arm64:argocd"
-    ["argo"]="argoproj/argo-workflows:argo-linux-arm64.gz:argo"
-    ["rancher"]="rancher/cli:cli-VERSION-linux-arm64.tar.gz:rancher"
-)
-
-# Global cleanup array
-declare -a CLEANUP_DIRS=()
-
-log() {
-    printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"
-}
-
-debug_log() {
-    [[ "${DEBUG:-false}" == "true" ]] && log "DEBUG" "$1"
-}
+log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
 
 cleanup() {
-    for dir in "${CLEANUP_DIRS[@]}"; do
-        [[ -d "$dir" ]] && rm -rf "$dir"
-    done
-    CLEANUP_DIRS=()
+    [[ -d "$TMPDIR" ]] && rm -rf "$TMPDIR"
 }
+trap cleanup EXIT
 
-add_cleanup() {
-    CLEANUP_DIRS+=("$1")
-}
-
-# Download function with retries
 download_file() {
-    local url="$1"
-    local output="$2"
-    local max_retries=3
-    local retry_count=0
-
-    while ((retry_count < max_retries)); do
-        debug_log "Attempting download: $url (attempt $((retry_count + 1)))"
-        if curl -fsSL --retry 3 --retry-delay 2 -o "$output" "$url"; then
-            debug_log "Download successful: $url"
-            return 0
-        fi
-        ((retry_count++))
-        log WARN "Download failed, attempt $retry_count of $max_retries"
-        sleep 2
-    done
-    
-    log ERROR "Failed to download after $max_retries attempts: $url"
-    return 1
+    local url="$1" output="$2"
+    curl -fsSL --retry 3 --retry-delay 2 -o "$output" "$url"
 }
 
-# Extract archive with type detection
 extract_archive() {
-    local archive="$1"
-    local type="$2"
-    local extract_dir="$3"
-
+    local archive="$1" type="$2" extract_dir="$3"
     case "$type" in
         tar.gz) tar xzf "$archive" -C "$extract_dir" ;;
         zip) unzip -q "$archive" -d "$extract_dir" ;;
         gz) gunzip -c "$archive" > "$extract_dir/$(basename "$archive" .gz)" && chmod +x "$extract_dir/$(basename "$archive" .gz)" ;;
-        *) log ERROR "Unsupported archive type: $type" && return 1 ;;
+        *) log ERROR "Unsupported archive type: $type"; return 1 ;;
     esac
 }
 
-# Get latest version of a tool from GitHub
 get_latest_version() {
-    local repo="$1"
-    curl -sS "https://api.github.com/repos/${repo}/releases/latest" | jq -r '.tag_name // empty'
+    curl -sS "https://api.github.com/repos/$1/releases/latest" | jq -r '.tag_name // empty'
 }
 
-# Verify if binary is correctly installed
 verify_binary() {
-    local bin_path="$1"
-    local name="$2"
-
-    [[ -f "$bin_path" && -x "$bin_path" ]] || { log ERROR "Binary $bin_path not found or not executable"; return 1; }
-
-    # Run version check based on tool
-    if ! "$bin_path" version >/dev/null 2>&1; then
-        log ERROR "Failed to verify $name installation - version check failed"
-        return 1
-    fi
-
-    return 0
-}
-
-# Install tool by downloading, extracting, and verifying
-install_tool() {
-    local name="$1"
-    local repo="$2"
-    local version="$3"
-    local pattern="$4"
-    local bin_name="$5"
+    local bin="$1" name="$2"
     
-    local tmpdir=$(mktemp -d)
-    add_cleanup "$tmpdir"
-
-    log INFO "Installing $name $version"
-    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-    local extract_dir="$tmpdir/extract"
-    mkdir -p "$extract_dir"
-
-    # Download archive
-    if ! download_file "$url" "$tmpdir/${name}.archive"; then
-        return 1
-    fi
-
-    # Determine archive type and extract
-    local archive_type
-    case "$url" in
-        *.tar.gz) archive_type="tar.gz" ;;
-        *.zip) archive_type="zip" ;;
-        *.gz) archive_type="gz" ;;
-        *) log ERROR "Unsupported archive format: $url" && return 1 ;;
-    esac
-
-    extract_archive "$tmpdir/${name}.archive" "$archive_type" "$extract_dir" || return 1
-
-    # Locate binary
-    local binary_path
-    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
-    [[ -z "$binary_path" ]] && { log ERROR "Binary $bin_name not found"; return 1; }
-
-    mkdir -p "$HOME/.local/bin"
-    cp "$binary_path" "$HOME/.local/bin/$bin_name"
-    chmod +x "$HOME/.local/bin/$bin_name"
-
-    verify_binary "$HOME/.local/bin/$bin_name" "$name" || return 1
-
-    log INFO "$name $version installed successfully"
-    return 0
-}
-
-install_tools() {
-    mkdir -p "$HOME/.local/bin"
-    local failed=false
+    [[ -x "$bin" ]] || { log ERROR "Binary $bin not executable"; return 1; }
     
-    for tool in "${!TOOLS[@]}"; do
-        if ! command -v "$tool" >/dev/null 2>&1; then
-            IFS=: read -r repo pattern bin_name <<< "${TOOLS[$tool]}"
-            version=$(get_latest_version "$repo") || { log ERROR "Failed to get version for $tool"; failed=true; continue; }
-            if ! install_tool "$tool" "$repo" "$version" "$pattern" "$bin_name"; then
-                failed=true
+    # Special handling for different tools
+    case "$name" in
+        velero)
+            # Just check if it's executable and exists, since version check needs k8s
+            [[ -x "$bin" ]] && return 0
+            ;;
+        argocd)
+            # For Go binaries, just check if executable and correct architecture
+            if file "$bin" | grep -q "ARM aarch64"; then
+                return 0
+            else
+                log ERROR "Invalid architecture for $name"
+                return 1
             fi
-        else
-            log INFO "$tool is already installed"
-        fi
-    done
-
-    return $((failed))
+            ;;
+        *)
+            # Default verification for other tools
+            if ! "$bin" version 2>/dev/null || ! "$bin" --version 2>/dev/null; then
+                log ERROR "Failed to verify $name installation"
+                return 1
+            fi
+            ;;
+    esac
 }
 
-setup_nix() {
-    if [[ ! -f "$HOME/.nix-channels" || $(find "$HOME/.nix-channels" -mtime +1) ]]; then
-        nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
-        nix-channel --update
-    fi
-}
-
-update_paths() {
-    local path_entries=(
-        'export PATH="$HOME/.nix-profile/bin:$PATH"'
-        'export PATH="$HOME/.local/bin:$PATH"'
-        'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"'
-    )
+install_tool() {
+    local name="$1" repo="$2" pattern="$3" bin_name="$4"
+    TMPDIR=$(mktemp -d)
+    log INFO "Installing $name"
+    local version=$(get_latest_version "$repo") || { log ERROR "Failed to get version for $name"; return 1; }
+    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
     
-    for config in "$HOME/.bashrc" "$HOME/.zshrc"; do
-        [[ -f "$config" ]] || continue
-        for entry in "${path_entries[@]}"; do
-            grep -q "$entry" "$config" || echo "$entry" >> "$config"
-        done
-    done
-    
-    export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
-}
-
-setup_completions() {
-    mkdir -p "$HOME/.zfunc"
-    for cmd in kubectl helm argocd argo velero rancher pluto vault; do
-        if command -v "$cmd" >/dev/null 2>&1; then
-            "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
-        fi
-    done
-}
-
-setup_krew() {
-    if ! command -v kubectl-krew >/dev/null 2>&1; then
-        local tmpdir=$(mktemp -d)
-        add_cleanup "$tmpdir"
+    if [[ "$url" == *.tar.gz || "$url" == *.zip || "$url" == *.gz ]]; then
+        local archive="$TMPDIR/$name.archive"
+        local extract_dir="$TMPDIR/extract"
+        mkdir -p "$extract_dir"
         
-        (
-            cd "$tmpdir" || exit 1
-            download_file "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz" "krew.tar.gz"
-            tar zxf "krew.tar.gz"
-            ./krew-linux_arm64 install krew
-
-            export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
-            kubectl krew install neat
-            kubectl krew install image
-        )
+        download_file "$url" "$archive" || return 1
+        extract_archive "$archive" "${url##*.}" "$extract_dir" || return 1
+        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    else
+        binary_path="$TMPDIR/$bin_name"
+        download_file "$url" "$binary_path" || return 1
+        chmod +x "$binary_path"
     fi
+    
+    [[ -f "$binary_path" ]] || { log ERROR "Binary $bin_name not found"; return 1; }
+    mv "$binary_path" "$HOME/.local/bin/$bin_name"
+    verify_binary "$HOME/.local/bin/$bin_name" "$name"
 }
 
 main() {
-    local start_time=$SECONDS
-    trap cleanup EXIT
-    
     log INFO "Starting setup"
     mkdir -p "${DIRS[@]}"
     
-    # Set up XDG_CONFIG_HOME
-    export XDG_CONFIG_HOME="$HOME/.config"
-    mkdir -p "$XDG_CONFIG_HOME/nixpkgs"
+    for tool_info in "${TOOLS[@]}"; do
+        IFS=: read -r name repo pattern bin_name <<< "$tool_info"
+        [[ -x "$HOME/.local/bin/$bin_name" ]] || install_tool "$name" "$repo" "$pattern" "$bin_name"
+    done
     
-    # Create symlinks
-    ln -sf "$PWD/nvim" "$XDG_CONFIG_HOME/nvim"
-    ln -sf "$PWD/.inputrc" "$HOME/.inputrc"
-    ln -sf "$PWD/.tmux.conf" "$HOME/.tmux.conf"
-    ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME/nixpkgs/config.nix"
-    
-    setup_nix
-    NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
-    
-    install_tools || true  # Continue even if some tools fail to install
-    
-    update_paths
-    setup_completions
-    
-    if [[ ! -d "$HOME/.zsh/pure" ]]; then
-        git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
-    fi
-    
-    setup_krew
-    
-    touch "$HOME/.privaterc"
-    log INFO "Setup completed in $((SECONDS - start_time)) seconds"
+    log INFO "Setup completed"
 }
 
 main
