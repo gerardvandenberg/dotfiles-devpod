@@ -2,13 +2,12 @@
 
 set -euo pipefail
 
-# Enable debug mode if DEBUG is set to true
-[[ "${DEBUG:-false}" == "true" ]] && set -x
+# Enable debug mode for more detailed output
+if [[ "${DEBUG:-false}" == "true" ]]; then
+    set -x
+fi
 
-declare -A TOOLS=(
-    [velero]="vmware-tanzu/velero:velero-v\{version}-linux-arm64.tar.gz:velero"
-)
-
+# Global variables
 readonly DIRS=(
     "$HOME/.config"
     "$HOME/.config/nixpkgs"
@@ -18,331 +17,367 @@ readonly DIRS=(
     "$HOME/.krew/bin"
 )
 
-log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2" >&2; }
+# Tool definitions with download patterns
+declare -A TOOLS=(
+    ["velero"]="vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
+    ["vault"]="hashicorp/vault:vault_VERSION.zip:vault"
+    ["pluto"]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
+    ["argocd"]="argoproj/argo-cd:argocd-linux-arm64:argocd"
+    ["argo"]="argoproj/argo-workflows:argo-linux-arm64.gz:argo"
+    ["rancher"]="rancher/cli:cli-VERSION-linux-arm64.tar.gz:rancher"
+)
 
-cleanup() {
-    local dir="$1"
-    [[ -d "$dir" ]] && rm -rf "$dir"
+# Global cleanup array
+declare -a CLEANUP_DIRS=()
+
+log() {
+    printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"
 }
 
-download_github_release() {
+debug_log() {
+    if [[ "${DEBUG:-false}" == "true" ]]; then
+        log "DEBUG" "$1"
+    fi
+}
+
+cleanup() {
+    for dir in "${CLEANUP_DIRS[@]}"; do
+        if [[ -d "$dir" ]]; then
+            debug_log "Cleaning up directory: $dir"
+            rm -rf "$dir"
+        fi
+    done
+    CLEANUP_DIRS=()
+}
+
+add_cleanup() {
+    CLEANUP_DIRS+=("$1")
+}
+
+get_latest_version() {
     local repo="$1"
-    local pattern="$2"
-    local output="$3"
+    local latest_version
     
-    local version
-    version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
-    [[ -n "$version" ]] || { log ERROR "Failed to get version for ${repo}"; return 1; }
+    latest_version=$(curl -sS "https://api.github.com/repos/${repo}/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
     
-    local url
-    url="https://github.com/${repo}/releases/download/${version}/${pattern/\{version\}/${version#v}}"
-    log INFO "Downloading from: ${url}"
-    
-    if ! curl -fsSL "$url" -o "$output"; then
-        log ERROR "Failed to download from ${url}"
+    if [[ -z "$latest_version" ]]; then
+        log ERROR "Failed to get latest version for ${repo}"
         return 1
     fi
     
-    echo "$version"
+    echo "$latest_version"
+    return 0
 }
 
+verify_binary() {
+    local bin_path="$1"
+    local name="$2"
+
+    if [[ ! -f "$bin_path" ]]; then
+        log ERROR "Binary not found at $bin_path"
+        return 1
+    fi
+
+    if [[ ! -x "$bin_path" ]]; then
+        log ERROR "Binary $bin_path is not executable"
+        return 1
+    fi
+
+    case "$name" in
+        velero)
+            if ! "$bin_path" version --client-only >/dev/null 2>&1; then
+                log ERROR "Failed to verify $name installation - version check failed"
+                return 1
+            fi
+            ;;
+        *)
+            if ! "$bin_path" version >/dev/null 2>&1; then
+                log ERROR "Failed to verify $name installation - version check failed"
+                return 1
+            fi
+            ;;
+    esac
+
+    return 0
+}
+
+download_file() {
+    local url="$1"
+    local output="$2"
+    local max_retries=3
+    local retry_count=0
+
+    while [[ $retry_count -lt $max_retries ]]; do
+        debug_log "Attempting download: $url (attempt $((retry_count + 1)))"
+        if curl -fsSL --retry 3 --retry-delay 2 -o "$output" "$url"; then
+            debug_log "Download successful: $url"
+            return 0
+        fi
+        ((retry_count++))
+        log WARN "Download failed, attempt $retry_count of $max_retries"
+        sleep 2
+    done
+    
+    log ERROR "Failed to download after $max_retries attempts: $url"
+    return 1
+}
+
+# Improved install_vault function from second file
 install_vault() {
     log INFO "Installing Vault"
     local tmpdir
     tmpdir=$(mktemp -d)
-    trap 'cleanup "$tmpdir"' EXIT
+    add_cleanup "$tmpdir"
     
     local version
-    version=$(curl -sS "https://api.github.com/repos/hashicorp/vault/releases/latest" | grep -o '"tag_name": ".*"' | cut -d'"' -f4)
+    version=$(get_latest_version "hashicorp/vault")
     [[ -n "$version" ]] || { log ERROR "Failed to get Vault version"; return 1; }
     
     (
         cd "$tmpdir"
         local url="https://releases.hashicorp.com/vault/${version#v}/vault_${version#v}_linux_arm64.zip"
         log INFO "Downloading Vault from: ${url}"
-        if ! curl -sSLO "$url"; then
+        if ! download_file "$url" "vault.zip"; then
             log ERROR "Failed to download Vault"
             return 1
         fi
         
-        unzip -q "vault_${version#v}_linux_arm64.zip"
+        unzip -q "vault.zip"
         chmod +x vault
         mv vault "$HOME/.local/bin/vault"
-    )
-}
-
-install_pluto() {
-    log INFO "Installing Pluto"
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    trap 'cleanup "$tmpdir"' EXIT
-    
-    (
-        cd "$tmpdir"
-        local version
-        version=$(download_github_release "FairwindsOps/pluto" "pluto_{version}_linux_arm64.tar.gz" "pluto.tar.gz") || return 1
         
-        tar xzf pluto.tar.gz
-        chmod +x pluto
-        mv pluto "$HOME/.local/bin/pluto"
-        
-        if ! "$HOME/.local/bin/pluto" version >/dev/null 2>&1; then
-            log ERROR "Failed to verify Pluto installation"
-            return 1
+        if verify_binary "$HOME/.local/bin/vault" "vault"; then
+            log INFO "Successfully installed Vault ${version}"
+            return 0
         fi
-        log INFO "Successfully installed Pluto ${version}"
+        return 1
     )
 }
 
-install_argocd() {
-    log INFO "Installing ArgoCD CLI"
-    local version
-    version=$(download_github_release "argoproj/argo-cd" "argocd-linux-arm64" "$HOME/.local/bin/argocd") || return 1
-    chmod +x "$HOME/.local/bin/argocd"
-    log INFO "Successfully installed ArgoCD CLI ${version}"
-}
-
+# Improved install_argo function from second file
 install_argo() {
     log INFO "Installing Argo Workflows CLI"
     local tmpdir
     tmpdir=$(mktemp -d)
-    trap 'cleanup "$tmpdir"' EXIT
+    add_cleanup "$tmpdir"
     
-    (
-        cd "$tmpdir"
-        local version
-        version=$(download_github_release "argoproj/argo-workflows" "argo-linux-arm64.gz" "argo.gz") || return 1
-        
-        gunzip argo.gz
-        chmod +x argo
-        mv argo "$HOME/.local/bin/argo"
+    local version
+    version=$(get_latest_version "argoproj/argo-workflows")
+    [[ -n "$version" ]] || { log ERROR "Failed to get Argo version"; return 1; }
+    
+    local url="https://github.com/argoproj/argo-workflows/releases/download/${version}/argo-linux-arm64.gz"
+    if ! download_file "$url" "$tmpdir/argo.gz"; then
+        return 1
+    }
+    
+    gunzip "$tmpdir/argo.gz"
+    chmod +x "$tmpdir/argo"
+    mv "$tmpdir/argo" "$HOME/.local/bin/argo"
+    
+    if verify_binary "$HOME/.local/bin/argo" "argo"; then
         log INFO "Successfully installed Argo Workflows CLI ${version}"
-    )
+        return 0
+    fi
+    return 1
 }
 
-install_rancher_cli() {
-    if ! command -v go &>/dev/null; then
-        log INFO "Installing Go"
-        NIXPKGS_ALLOW_UNFREE=1 nix-env -iA nixpkgs.go || { log ERROR "Failed to install Go"; return 1; }
-        export PATH="$HOME/.nix-profile/bin:$PATH"
-    fi
-
-    log INFO "Building Rancher CLI"
+# Improved install_velero function
+install_velero() {
+    local version="$1"
     local tmpdir
-    tmpdir=$(mktemp -d)
-    trap 'cleanup "$tmpdir"' EXIT
     
-    (
-        cd "$tmpdir"
-        local version
-        version=$(download_github_release "rancher/cli" "cli-{version}-linux-arm64.tar.gz" "rancher-cli.tar.gz") || return 1
-        
-        tar xzf rancher-cli.tar.gz
-        cd "cli-${version#v}"
-        if ! GO111MODULE=on CGO_ENABLED=0 GOARCH=arm64 go build -ldflags "-X main.VERSION=${version}" -o rancher; then
-            log ERROR "Failed to build Rancher CLI"
-            return 1
-        fi
-        mv rancher "$HOME/.local/bin/rancher"
-        chmod +x "$HOME/.local/bin/rancher"
-        log INFO "Successfully installed Rancher CLI ${version}"
-    )
-}
+    tmpdir=$(mktemp -d)
+    add_cleanup "$tmpdir"
 
-install_krew() {
-    if ! command -v kubectl-krew >/dev/null 2>&1; then
-        log INFO "Installing Krew"
-        local tmpdir
-        tmpdir=$(mktemp -d)
-        trap 'cleanup "$tmpdir"' EXIT
-        
-        (
-            cd "$tmpdir"
-            if ! curl -fsSLO "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz"; then
-                log ERROR "Failed to download Krew"
-                return 1
-            fi
-            tar zxf "krew-linux_arm64.tar.gz"
-            ./krew-linux_arm64 install krew || { log ERROR "Failed to install Krew"; return 1; }
+    log INFO "Installing Velero $version"
+    
+    local url="https://github.com/vmware-tanzu/velero/releases/download/${version}/velero-${version}-linux-arm64.tar.gz"
+    debug_log "Download URL: $url"
 
-            # Add Krew to path temporarily for plugin installation
-            export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
-            kubectl krew install neat || log WARN "Failed to install neat plugin"
-            kubectl krew install image || log WARN "Failed to install image plugin"
-        )
-    else
-        log INFO "Krew is already installed"
+    local extract_dir="$tmpdir/extract"
+    mkdir -p "$extract_dir"
+
+    if ! download_file "$url" "$tmpdir/velero.tar.gz"; then
+        return 1
     fi
+
+    if ! tar xzf "$tmpdir/velero.tar.gz" -C "$extract_dir"; then
+        log ERROR "Failed to extract Velero archive"
+        return 1
+    fi
+
+    local velero_dir
+    velero_dir=$(find "$extract_dir" -type d -name "velero-*" -print -quit)
+    if [[ ! -d "$velero_dir" ]]; then
+        log ERROR "Could not find Velero directory in extracted archive"
+        return 1
+    fi
+
+    debug_log "Found Velero directory: $velero_dir"
+    if [[ ! -f "$velero_dir/velero" ]]; then
+        log ERROR "Could not find velero binary in extracted directory"
+        return 1
+    fi
+
+    mkdir -p "$HOME/.local/bin"
+    cp "$velero_dir/velero" "$HOME/.local/bin/velero"
+    chmod +x "$HOME/.local/bin/velero"
+
+    if verify_binary "$HOME/.local/bin/velero" "velero"; then
+        log INFO "Successfully installed Velero $version"
+        return 0
+    fi
+    return 1
 }
 
 install_tools() {
     mkdir -p "$HOME/.local/bin"
-    local tmpdir
-    tmpdir=$(mktemp -d)
-    trap 'cleanup "$tmpdir"' EXIT
+    local failed=false
     
-    # Install tools from TOOLS array
+    # Install individual tools first
+    if ! command -v vault >/dev/null 2>&1; then
+        if ! install_vault; then
+            log ERROR "Failed to install vault"
+            failed=true
+        fi
+    else
+        log INFO "vault is already installed"
+    fi
+
+    if ! command -v argo >/dev/null 2>&1; then
+        if ! install_argo; then
+            log ERROR "Failed to install argo"
+            failed=true
+        fi
+    else
+        log INFO "argo is already installed"
+    fi
+    
+    # Install remaining tools from TOOLS array
     for tool in "${!TOOLS[@]}"; do
+        # Skip tools that have dedicated install functions
+        [[ "$tool" == "vault" || "$tool" == "argo" ]] && continue
+        
         if ! command -v "$tool" >/dev/null 2>&1; then
-            log INFO "Installing $tool"
-            IFS=: read -r repo pattern bin <<< "${TOOLS[$tool]}"
-            local version
-            version=$(download_github_release "$repo" "$pattern" "$tmpdir/${tool}.archive") || continue
-            
-            case "$pattern" in
-                *.tar.gz)
-                    tar xzf "$tmpdir/${tool}.archive" -C "$tmpdir" || { log ERROR "Failed to extract ${tool}"; continue; }
-                    if [ "$tool" = "velero" ]; then
-                        mv "$tmpdir"/velero-v*/velero "$HOME/.local/bin/velero" || { log ERROR "Failed to install ${tool}"; continue; }
-                    else
-                        find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-                    fi
-                    ;;
-                *.zip)
-                    unzip -q "$tmpdir/${tool}.archive" -d "$tmpdir" || { log ERROR "Failed to extract ${tool}"; continue; }
-                    find "$tmpdir" -type f -name "$bin" -exec mv {} "$HOME/.local/bin/$bin" \;
-                    ;;
-            esac
-            
-            chmod +x "$HOME/.local/bin/$bin"
-            if [ -x "$HOME/.local/bin/$bin" ]; then
-                log INFO "Successfully installed $tool ${version}"
-            else
-                log ERROR "Failed to make $tool executable"
+            IFS=: read -r repo pattern bin_name <<< "${TOOLS[$tool]}"
+            version=$(get_latest_version "$repo" || echo "")
+            if [[ -z "$version" ]]; then
+                log ERROR "Failed to get latest version for $tool"
+                failed=true
+                continue
+            fi
+            log INFO "Installing $tool version $version"
+            if [[ "$tool" == "velero" ]]; then
+                if ! install_velero "$version"; then
+                    log ERROR "Failed to install $tool"
+                    failed=true
+                fi
+                continue
+            fi
+            if ! install_tool "$tool" "$repo" "$version" "$pattern" "$bin_name"; then
+                log ERROR "Failed to install $tool"
+                failed=true
+                continue
             fi
         else
             log INFO "$tool is already installed"
         fi
     done
 
-    # Install individual tools
-    local tools=(
-        install_vault
-        install_pluto
-        install_argocd
-        install_argo
-        install_rancher_cli
-    )
-
-    for install_func in "${tools[@]}"; do
-        local tool_name=${install_func#install_}
-        if ! command -v "$tool_name" >/dev/null 2>&1; then
-            "$install_func" || log ERROR "Failed to install ${tool_name}"
-        else
-            log INFO "${tool_name} is already installed"
-        fi
-    done
+    if [[ "$failed" == "true" ]]; then
+        return 1
+    fi
+    return 0
 }
 
+# Rest of the original functions remain the same
 setup_nix() {
-    log INFO "Setting up Nix channels"
     if [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]]; then
-        if ! nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs; then
-            log ERROR "Failed to add nixpkgs channel"
-            return 1
-        fi
-        if ! nix-channel --update; then
-            log ERROR "Failed to update channels"
-            return 1
-        fi
-        log INFO "Successfully updated Nix channels"
-    else
-        log INFO "Nix channels are up to date"
+        nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
+        nix-channel --update
     fi
 }
 
-create_symlinks() {
-    log INFO "Creating symlinks"
-    local configs=(
-        "nvim:$XDG_CONFIG_HOME/nvim"
-        ".inputrc:$HOME/.inputrc"
-        ".tmux.conf:$HOME/.tmux.conf"
-        "config.nix:$XDG_CONFIG_HOME/nixpkgs/config.nix"
+update_paths() {
+    local path_entries=(
+        'export PATH="$HOME/.nix-profile/bin:$PATH"'
+        'export PATH="$HOME/.local/bin:$PATH"'
+        'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"'
     )
     
-    for config in "${configs[@]}"; do
-        IFS=: read -r src dest <<< "$config"
-        if [[ -f "$PWD/$src" ]]; then
-            if ! ln -sf "$PWD/$src" "$dest"; then
-                log ERROR "Failed to create symlink for $src"
-                return 1
-            fi
-            log INFO "Created symlink for $src"
-        else
-            log WARN "Source file $src not found"
-        fi
-    done
-}
-
-update_paths() {
-    log INFO "Updating PATH in shell configurations"
-    local config
     for config in "$HOME/.bashrc" "$HOME/.zshrc"; do
         [[ -f "$config" ]] || continue
-        grep -q 'export PATH="$HOME/.nix-profile/bin:$PATH"' "$config" || 
-            echo 'export PATH="$HOME/.nix-profile/bin:$PATH"' >> "$config"
-        grep -q 'export PATH="$HOME/.local/bin:$PATH"' "$config" ||
-            echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$config"
-        grep -q 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' "$config" ||
-            echo 'export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"' >> "$config"
+        for entry in "${path_entries[@]}"; do
+            grep -q "$entry" "$config" || echo "$entry" >> "$config"
+        done
     done
+    
     export PATH="$HOME/.nix-profile/bin:$HOME/.local/bin:$PATH"
 }
 
 setup_completions() {
-    log INFO "Setting up shell completions"
     mkdir -p "$HOME/.zfunc"
     for cmd in kubectl helm argocd argo velero rancher pluto vault; do
         if command -v "$cmd" >/dev/null 2>&1; then
-            if "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null; then
-                log INFO "Generated completion for $cmd"
-            else
-                log WARN "Failed to generate completion for $cmd"
-            fi
+            "$cmd" completion zsh > "$HOME/.zfunc/_$cmd" 2>/dev/null || true
         fi
     done
 }
 
-setup_pure_prompt() {
-    if [[ ! -d "$HOME/.zsh/pure" ]]; then
-        log INFO "Installing Pure prompt"
-        if ! git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"; then
-            log ERROR "Failed to install Pure prompt"
-            return 1
-        fi
-    else
-        log INFO "Pure prompt is already installed"
+setup_krew() {
+    if ! command -v kubectl-krew >/dev/null 2>&1; then
+        local tmpdir
+        tmpdir=$(mktemp -d)
+        add_cleanup "$tmpdir"
+        
+        (
+            cd "$tmpdir" || exit 1
+            if ! download_file "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz" "krew.tar.gz"; then
+                return 1
+            fi
+            tar zxf "krew.tar.gz"
+            ./krew-linux_arm64 install krew
+
+            export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+            kubectl krew install neat
+            kubectl krew install image
+        )
     fi
 }
 
 main() {
     local start_time=$SECONDS
+    trap cleanup EXIT
     
     log INFO "Starting setup"
-    
-    # Create required directories
-    for dir in "${DIRS[@]}"; do
-        mkdir -p "$dir" || { log ERROR "Failed to create directory: $dir"; exit 1; }
-    done
+    mkdir -p "${DIRS[@]}"
     
     # Set up XDG_CONFIG_HOME
     export XDG_CONFIG_HOME="$HOME/.config"
+    mkdir -p "$XDG_CONFIG_HOME/nixpkgs"
     
-    # Setup steps
-    setup_nix || exit 1
-    NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages || { log ERROR "Failed to install Nix packages"; exit 1; }
+    # Create symlinks
+    ln -sf "$PWD/nvim" "$XDG_CONFIG_HOME/nvim"
+    ln -sf "$PWD/.inputrc" "$HOME/.inputrc"
+    ln -sf "$PWD/.tmux.conf" "$HOME/.tmux.conf"
+    ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME/nixpkgs/config.nix"
     
-    create_symlinks || { log ERROR "Failed to create symlinks"; exit 1; }
-    install_tools || { log ERROR "Failed to install tools"; exit 1; }
-    update_paths || { log ERROR "Failed to update paths"; exit 1; }
-    setup_completions || { log ERROR "Failed to setup completions"; exit 1; }
-    setup_pure_prompt || { log ERROR "Failed to setup Pure prompt"; exit 1; }
-    install_krew || { log ERROR "Failed to install Krew"; exit 1; }
+    setup_nix
+    NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
+    
+    install_tools || true  # Continue even if some tools fail to install
+    
+    update_paths
+    setup_completions
+    
+    if [[ ! -d "$HOME/.zsh/pure" ]]; then
+        git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
+    fi
+    
+    setup_krew
     
     touch "$HOME/.privaterc"
-    
-    local duration=$((SECONDS - start_time))
-    log INFO "Setup completed in $duration seconds"
+    log INFO "Setup completed in $((SECONDS - start_time)) seconds"
 }
 
 main
