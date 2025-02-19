@@ -7,7 +7,7 @@ set -euo pipefail
 readonly DIRS=("$HOME/.config" "$HOME/.local/bin")
 readonly TOOLS=(
     "velero:vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
-    "vault:hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
+    "vault:hashicorp/vault:releases.hashicorp.com/vault/VERSION/vault_VERSION_linux_arm64.zip:vault"
     "pluto:FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
     "argocd:argoproj/argo-cd:argocd-linux-arm64:argocd:binary"
     "argo:argoproj/argo-workflows:argo-linux-arm64.gz:argo"
@@ -72,8 +72,8 @@ extract_archive() {
             chmod +x "$output_file"
             ;;
         binary)
-            # For direct binary downloads, just copy to extract dir
-            local output_file="$extract_dir/$(basename "$archive")"
+            # For direct binary downloads, just copy to extract dir with the correct name
+            local output_file="$extract_dir/$4"
             cp "$archive" "$output_file"
             chmod +x "$output_file"
             ;;
@@ -129,7 +129,14 @@ find_binary() {
     local extract_dir="$1" bin_name="$2"
     log INFO "Searching for binary $bin_name in $extract_dir"
     
-    # First try direct path in known subdirectory pattern
+    # First try direct path
+    if [[ -f "$extract_dir/$bin_name" ]]; then
+        log INFO "Found binary at: $extract_dir/$bin_name"
+        echo "$extract_dir/$bin_name"
+        return 0
+    fi
+    
+    # Try version directory pattern
     local version_dir
     version_dir=$(find "$extract_dir" -type d -name "*linux-arm64" -print -quit)
     if [[ -n "$version_dir" ]] && [[ -f "$version_dir/$bin_name" ]]; then
@@ -147,14 +154,6 @@ find_binary() {
         return 0
     fi
     
-    # If still not found, try case-insensitive search
-    binary_path=$(find "$extract_dir" -type f -iname "$bin_name" -print -quit)
-    if [[ -n "$binary_path" ]]; then
-        log INFO "Found binary (case-insensitive) at: $binary_path"
-        echo "$binary_path"
-        return 0
-    fi
-    
     log ERROR "Binary not found after searching"
     return 1
 }
@@ -167,8 +166,13 @@ install_tool() {
     local version
     version=$(get_latest_version "$repo") || return 1
     
-    # Construct URL
-    local url="https://github.com/${repo}/releases/download/v${version}/${pattern/VERSION/${version}}"
+    # Construct URL based on the pattern
+    local url
+    if [[ "$pattern" == *"releases.hashicorp.com"* ]]; then
+        url="https://${pattern/VERSION/${version}}"
+    else
+        url="https://github.com/${repo}/releases/download/v${version}/${pattern/VERSION/${version}}"
+    fi
     log INFO "Download URL: $url"
     
     local archive="$TMPDIR/$name.archive"
@@ -176,20 +180,7 @@ install_tool() {
     mkdir -p "$extract_dir"
     
     # Download and extract
-    if ! download_file "$url" "$archive"; then
-        # If primary URL fails, try alternative patterns for some tools
-        case "$name" in
-            vault)
-                # Try alternate Vault URL pattern
-                url="https://releases.hashicorp.com/vault/${version}/vault_${version}_linux_arm64.zip"
-                log INFO "Trying alternate URL: $url"
-                download_file "$url" "$archive" || return 1
-                ;;
-            *)
-                return 1
-                ;;
-        esac
-    fi
+    download_file "$url" "$archive" || return 1
     
     local file_type
     if [[ "$type" == "binary" ]]; then
@@ -198,7 +189,7 @@ install_tool() {
         file_type=$(get_file_type "$url")
     fi
     
-    extract_archive "$archive" "$file_type" "$extract_dir" || return 1
+    extract_archive "$archive" "$file_type" "$extract_dir" "$bin_name" || return 1
     
     # Find and install binary
     local binary_path
