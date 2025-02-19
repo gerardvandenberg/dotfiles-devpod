@@ -23,37 +23,57 @@ trap cleanup EXIT
 
 download_file() {
     local url="$1" output="$2"
+    log INFO "Downloading from: $url"
     curl -fsSL --retry 3 --retry-delay 2 -o "$output" "$url"
 }
 
 extract_archive() {
     local archive="$1" type="$2" extract_dir="$3"
+    log INFO "Extracting $archive of type $type to $extract_dir"
     case "$type" in
-        tar.gz) tar xzf "$archive" -C "$extract_dir" ;;
-        zip) unzip -q "$archive" -d "$extract_dir" ;;
-        gz) gunzip -c "$archive" > "$extract_dir/$(basename "$archive" .gz)" && chmod +x "$extract_dir/$(basename "$archive" .gz)" ;;
+        tar.gz) 
+            tar xzf "$archive" -C "$extract_dir"
+            log INFO "Contents of extract directory:"
+            find "$extract_dir" -type f -ls
+            ;;
+        zip)
+            unzip -q "$archive" -d "$extract_dir"
+            log INFO "Contents of extract directory:"
+            find "$extract_dir" -type f -ls
+            ;;
+        gz)
+            local output_file="$extract_dir/$(basename "$archive" .gz)"
+            gunzip -c "$archive" > "$output_file"
+            chmod +x "$output_file"
+            log INFO "Created gunzipped file: $output_file"
+            ;;
         *) log ERROR "Unsupported archive type: $type"; return 1 ;;
     esac
 }
 
 get_latest_version() {
-    curl -sS "https://api.github.com/repos/$1/releases/latest" | jq -r '.tag_name // empty'
+    local version
+    version=$(curl -sS "https://api.github.com/repos/$1/releases/latest" | jq -r '.tag_name // empty')
+    log INFO "Latest version for $1: $version"
+    echo "$version"
 }
 
 verify_binary() {
     local bin="$1" name="$2"
     
+    log INFO "Verifying binary: $bin for $name"
     [[ -x "$bin" ]] || { log ERROR "Binary $bin not executable"; return 1; }
     
-    # Special handling for different tools
     case "$name" in
         velero)
-            # Just check if it's executable and exists, since version check needs k8s
-            [[ -x "$bin" ]] && return 0
+            if [[ -x "$bin" ]]; then
+                log INFO "Velero binary verified executable"
+                return 0
+            fi
             ;;
         argocd)
-            # For Go binaries, just check if executable and correct architecture
             if file "$bin" | grep -q "ARM aarch64"; then
+                log INFO "ArgoCD binary verified as ARM64"
                 return 0
             else
                 log ERROR "Invalid architecture for $name"
@@ -61,7 +81,6 @@ verify_binary() {
             fi
             ;;
         *)
-            # Default verification for other tools
             if ! "$bin" version 2>/dev/null || ! "$bin" --version 2>/dev/null; then
                 log ERROR "Failed to verify $name installation"
                 return 1
@@ -70,12 +89,40 @@ verify_binary() {
     esac
 }
 
+find_binary() {
+    local extract_dir="$1" bin_name="$2"
+    log INFO "Searching for binary $bin_name in $extract_dir"
+    
+    # First try exact name match
+    local binary_path
+    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    
+    # If not found, try case-insensitive search
+    if [[ -z "$binary_path" ]]; then
+        log INFO "Exact match not found, trying case-insensitive search"
+        binary_path=$(find "$extract_dir" -type f -iname "$bin_name" -print -quit)
+    fi
+    
+    # If still not found, list all files for debugging
+    if [[ -z "$binary_path" ]]; then
+        log INFO "Binary not found, listing all files:"
+        find "$extract_dir" -type f -ls
+        return 1
+    fi
+    
+    echo "$binary_path"
+}
+
 install_tool() {
     local name="$1" repo="$2" pattern="$3" bin_name="$4"
     TMPDIR=$(mktemp -d)
-    log INFO "Installing $name"
-    local version=$(get_latest_version "$repo") || { log ERROR "Failed to get version for $name"; return 1; }
+    log INFO "Installing $name (TMPDIR: $TMPDIR)"
+    
+    local version
+    version=$(get_latest_version "$repo") || { log ERROR "Failed to get version for $name"; return 1; }
+    
     local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+    local binary_path
     
     if [[ "$url" == *.tar.gz || "$url" == *.zip || "$url" == *.gz ]]; then
         local archive="$TMPDIR/$name.archive"
@@ -84,14 +131,19 @@ install_tool() {
         
         download_file "$url" "$archive" || return 1
         extract_archive "$archive" "${url##*.}" "$extract_dir" || return 1
-        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+        
+        binary_path=$(find_binary "$extract_dir" "$bin_name")
+        if [[ -z "$binary_path" ]]; then
+            log ERROR "Binary $bin_name not found after extraction"
+            return 1
+        fi
     else
         binary_path="$TMPDIR/$bin_name"
         download_file "$url" "$binary_path" || return 1
         chmod +x "$binary_path"
     fi
     
-    [[ -f "$binary_path" ]] || { log ERROR "Binary $bin_name not found"; return 1; }
+    log INFO "Moving binary from $binary_path to $HOME/.local/bin/$bin_name"
     mv "$binary_path" "$HOME/.local/bin/$bin_name"
     verify_binary "$HOME/.local/bin/$bin_name" "$name"
 }
@@ -102,7 +154,14 @@ main() {
     
     for tool_info in "${TOOLS[@]}"; do
         IFS=: read -r name repo pattern bin_name <<< "$tool_info"
-        [[ -x "$HOME/.local/bin/$bin_name" ]] || install_tool "$name" "$repo" "$pattern" "$bin_name"
+        if [[ -x "$HOME/.local/bin/$bin_name" ]]; then
+            log INFO "Binary $bin_name already installed"
+        else
+            install_tool "$name" "$repo" "$pattern" "$bin_name" || {
+                log ERROR "Failed to install $name"
+                return 1
+            }
+        fi
     done
     
     log INFO "Setup completed"
