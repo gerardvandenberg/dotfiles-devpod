@@ -132,26 +132,24 @@ install_vault() {
     local version
     version=$(get_latest_version "hashicorp/vault")
     [[ -n "$version" ]] || { log ERROR "Failed to get Vault version"; return 1; }
+
+    local url="https://releases.hashicorp.com/vault/${version#v}/vault_${version#v}_linux_arm64.zip"
+    log INFO "Downloading Vault from: ${url}"
     
-    (
-        cd "$tmpdir"
-        local url="https://releases.hashicorp.com/vault/${version#v}/vault_${version#v}_linux_arm64.zip"
-        log INFO "Downloading Vault from: ${url}"
-        if ! download_file "$url" "vault.zip"; then
-            log ERROR "Failed to download Vault"
-            return 1
-        fi
-        
-        unzip -q "vault.zip"
-        chmod +x vault
-        mv vault "$HOME/.local/bin/vault"
-        
-        if verify_binary "$HOME/.local/bin/vault" "vault"; then
-            log INFO "Successfully installed Vault ${version}"
-            return 0
-        fi
+    if ! download_file "$url" "$tmpdir/vault.zip"; then
+        log ERROR "Failed to download Vault"
         return 1
-    )
+    fi
+    
+    (cd "$tmpdir" && unzip -q "vault.zip")
+    chmod +x "$tmpdir/vault"
+    mv "$tmpdir/vault" "$HOME/.local/bin/vault"
+    
+    if verify_binary "$HOME/.local/bin/vault" "vault"; then
+        log INFO "Successfully installed Vault ${version}"
+        return 0
+    fi
+    return 1
 }
 
 # Improved install_argo function from second file
@@ -168,7 +166,7 @@ install_argo() {
     local url="https://github.com/argoproj/argo-workflows/releases/download/${version}/argo-linux-arm64.gz"
     if ! download_file "$url" "$tmpdir/argo.gz"; then
         return 1
-    }
+    fi
     
     gunzip "$tmpdir/argo.gz"
     chmod +x "$tmpdir/argo"
@@ -290,7 +288,6 @@ install_tools() {
     return 0
 }
 
-# Rest of the original functions remain the same
 setup_nix() {
     if [[ ! -f "$HOME/.nix-channels" ]] || [[ $(find "$HOME/.nix-channels" -mtime +1) ]]; then
         nix-channel --add https://nixos.org/channels/nixpkgs-unstable nixpkgs
@@ -330,18 +327,16 @@ setup_krew() {
         tmpdir=$(mktemp -d)
         add_cleanup "$tmpdir"
         
-        (
-            cd "$tmpdir" || exit 1
-            if ! download_file "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz" "krew.tar.gz"; then
-                return 1
-            fi
-            tar zxf "krew.tar.gz"
-            ./krew-linux_arm64 install krew
+        cd "$tmpdir" || exit 1
+        if ! download_file "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz" "krew.tar.gz"; then
+            return 1
+        fi
+        tar zxf "krew.tar.gz"
+        ./krew-linux_arm64 install krew
 
-            export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
-            kubectl krew install neat
-            kubectl krew install image
-        )
+        export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+        kubectl krew install neat
+        kubectl krew install image
     fi
 }
 
