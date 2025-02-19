@@ -228,6 +228,81 @@ install_velero() {
     return 1
 }
 
+# Add the missing install_tool function
+install_tool() {
+    local name="$1"
+    local repo="$2"
+    local version="$3"
+    local pattern="$4"
+    local bin_name="$5"
+    
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    add_cleanup "$tmpdir"
+
+    log INFO "Installing $name version $version"
+    
+    # Construct download URL
+    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+    debug_log "Download URL: $url"
+
+    # Create temporary directory for extraction
+    local extract_dir="$tmpdir/extract"
+    mkdir -p "$extract_dir"
+
+    # Download the archive
+    local archive_path="$tmpdir/${name}.archive"
+    if ! download_file "$url" "$archive_path"; then
+        return 1
+    fi
+
+    # Determine archive type and extract
+    if [[ $pattern == *.tar.gz ]]; then
+        if ! tar xzf "$archive_path" -C "$extract_dir"; then
+            log ERROR "Failed to extract tar.gz archive for $name"
+            return 1
+        fi
+    elif [[ $pattern == *.zip ]]; then
+        if ! unzip -q "$archive_path" -d "$extract_dir"; then
+            log ERROR "Failed to extract zip archive for $name"
+            return 1
+        fi
+    elif [[ $pattern == *.gz ]]; then
+        if ! gunzip -c "$archive_path" > "$extract_dir/$bin_name"; then
+            log ERROR "Failed to extract gz archive for $name"
+            return 1
+        fi
+        chmod +x "$extract_dir/$bin_name"
+    else
+        log ERROR "Unsupported archive format for $name: $pattern"
+        return 1
+    fi
+
+    # Find and install binary
+    local binary_path
+    if [[ $pattern == *.gz && ! $pattern == *.tar.gz ]]; then
+        binary_path="$extract_dir/$bin_name"
+    else
+        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
+    fi
+
+    if [[ -z "$binary_path" ]]; then
+        log ERROR "Could not find binary $bin_name in extracted archive"
+        return 1
+    fi
+
+    mkdir -p "$HOME/.local/bin"
+    cp "$binary_path" "$HOME/.local/bin/$bin_name"
+    chmod +x "$HOME/.local/bin/$bin_name"
+    
+    if verify_binary "$HOME/.local/bin/$bin_name" "$name"; then
+        log INFO "Successfully installed $name $version"
+        return 0
+    fi
+    
+    return 1
+}
+
 install_tools() {
     mkdir -p "$HOME/.local/bin"
     local failed=false
