@@ -20,7 +20,7 @@ readonly DIRS=(
 # Tool definitions with download patterns
 declare -A TOOLS=(
     ["velero"]="vmware-tanzu/velero:velero-vVERSION-linux-arm64.tar.gz:velero"
-    ["vault"]="hashicorp/vault:vault_VERSION.zip:vault"
+    ["vault"]="hashicorp/vault:vault_VERSION_linux_arm64.zip:vault"
     ["pluto"]="FairwindsOps/pluto:pluto_VERSION_linux_arm64.tar.gz:pluto"
     ["argocd"]="argoproj/argo-cd:argocd-linux-arm64:argocd"
     ["argo"]="argoproj/argo-workflows:argo-linux-arm64.gz:argo"
@@ -122,7 +122,6 @@ download_file() {
     return 1
 }
 
-# Improved install_vault function from second file
 install_vault() {
     log INFO "Installing Vault"
     local tmpdir
@@ -152,7 +151,6 @@ install_vault() {
     return 1
 }
 
-# Improved install_argo function from second file
 install_argo() {
     log INFO "Installing Argo Workflows CLI"
     local tmpdir
@@ -179,7 +177,31 @@ install_argo() {
     return 1
 }
 
-# Improved install_velero function
+install_argocd() {
+    log INFO "Installing argocd version"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    add_cleanup "$tmpdir"
+    
+    local version
+    version=$(get_latest_version "argoproj/argo-cd")
+    [[ -n "$version" ]] || { log ERROR "Failed to get ArgoCD version"; return 1; }
+
+    local url="https://github.com/argoproj/argo-cd/releases/download/${version}/argocd-linux-arm64"
+    if ! download_file "$url" "$tmpdir/argocd"; then
+        return 1
+    fi
+    
+    chmod +x "$tmpdir/argocd"
+    mv "$tmpdir/argocd" "$HOME/.local/bin/argocd"
+    
+    if verify_binary "$HOME/.local/bin/argocd" "argocd"; then
+        log INFO "Successfully installed ArgoCD ${version}"
+        return 0
+    fi
+    return 1
+}
+
 install_velero() {
     local version="$1"
     local tmpdir
@@ -228,134 +250,123 @@ install_velero() {
     return 1
 }
 
-# Add the missing install_tool function
-install_tool() {
-    local name="$1"
-    local repo="$2"
-    local version="$3"
-    local pattern="$4"
-    local bin_name="$5"
-    
+install_pluto() {
+    log INFO "Installing pluto version"
     local tmpdir
     tmpdir=$(mktemp -d)
     add_cleanup "$tmpdir"
-
-    log INFO "Installing $name version $version"
     
-    # Construct download URL
-    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
-    debug_log "Download URL: $url"
+    local version
+    version=$(get_latest_version "FairwindsOps/pluto")
+    [[ -n "$version" ]] || { log ERROR "Failed to get Pluto version"; return 1; }
 
-    # Create temporary directory for extraction
-    local extract_dir="$tmpdir/extract"
-    mkdir -p "$extract_dir"
-
-    # Download the archive
-    local archive_path="$tmpdir/${name}.archive"
-    if ! download_file "$url" "$archive_path"; then
+    local url="https://github.com/FairwindsOps/pluto/releases/download/${version}/pluto_${version#v}_linux_arm64.tar.gz"
+    if ! download_file "$url" "$tmpdir/pluto.tar.gz"; then
         return 1
     fi
-
-    # Determine archive type and extract
-    if [[ $pattern == *.tar.gz ]]; then
-        if ! tar xzf "$archive_path" -C "$extract_dir"; then
-            log ERROR "Failed to extract tar.gz archive for $name"
-            return 1
-        fi
-    elif [[ $pattern == *.zip ]]; then
-        if ! unzip -q "$archive_path" -d "$extract_dir"; then
-            log ERROR "Failed to extract zip archive for $name"
-            return 1
-        fi
-    elif [[ $pattern == *.gz ]]; then
-        if ! gunzip -c "$archive_path" > "$extract_dir/$bin_name"; then
-            log ERROR "Failed to extract gz archive for $name"
-            return 1
-        fi
-        chmod +x "$extract_dir/$bin_name"
-    else
-        log ERROR "Unsupported archive format for $name: $pattern"
-        return 1
-    fi
-
-    # Find and install binary
-    local binary_path
-    if [[ $pattern == *.gz && ! $pattern == *.tar.gz ]]; then
-        binary_path="$extract_dir/$bin_name"
-    else
-        binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
-    fi
-
-    if [[ -z "$binary_path" ]]; then
-        log ERROR "Could not find binary $bin_name in extracted archive"
-        return 1
-    fi
-
-    mkdir -p "$HOME/.local/bin"
-    cp "$binary_path" "$HOME/.local/bin/$bin_name"
-    chmod +x "$HOME/.local/bin/$bin_name"
     
-    if verify_binary "$HOME/.local/bin/$bin_name" "$name"; then
-        log INFO "Successfully installed $name $version"
+    (cd "$tmpdir" && tar xzf "pluto.tar.gz")
+    chmod +x "$tmpdir/pluto"
+    mv "$tmpdir/pluto" "$HOME/.local/bin/pluto"
+    
+    if verify_binary "$HOME/.local/bin/pluto" "pluto"; then
+        log INFO "Successfully installed Pluto ${version}"
         return 0
     fi
-    
     return 1
+}
+
+install_rancher() {
+    log INFO "Installing rancher version"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    add_cleanup "$tmpdir"
+    
+    local version
+    version=$(get_latest_version "rancher/cli")
+    [[ -n "$version" ]] || { log ERROR "Failed to get Rancher version"; return 1; }
+
+    local url="https://github.com/rancher/cli/releases/download/${version}/cli-${version#v}-linux-arm64.tar.gz"
+    if ! download_file "$url" "$tmpdir/rancher.tar.gz"; then
+        return 1
+    fi
+    
+    if ! tar xzf "$tmpdir/rancher.tar.gz" -C "$tmpdir"; then
+        log ERROR "Failed to extract Rancher archive"
+        return 1
+    fi
+
+    local rancher_dir
+    rancher_dir=$(find "$tmpdir" -type d -name "cli-*" -print -quit)
+    if [[ ! -d "$rancher_dir" ]]; then
+        log ERROR "Could not find Rancher directory in extracted archive"
+        return 1
+    fi
+
+    chmod +x "$rancher_dir/rancher"
+    mv "$rancher_dir/rancher" "$HOME/.local/bin/rancher"
+    
+    if verify_binary "$HOME/.local/bin/rancher" "rancher"; then
+        log INFO "Successfully installed Rancher ${version}"
+        return 0
+    fi
+    return 1
+}
+
+setup_krew() {
+    if ! command -v kubectl-krew >/dev/null 2>&1; then
+        local tmpdir
+        tmpdir=$(mktemp -d)
+        add_cleanup "$tmpdir"
+        
+        cd "$tmpdir" || exit 1
+        if ! download_file "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz" "krew.tar.gz"; then
+            return 1
+        fi
+        tar zxf "krew.tar.gz"
+        ./krew-linux_arm64 install krew
+
+        export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
+        kubectl krew install neat
+        kubectl krew install image
+    fi
 }
 
 install_tools() {
     mkdir -p "$HOME/.local/bin"
     local failed=false
     
-    # Install individual tools first
-    if ! command -v vault >/dev/null 2>&1; then
-        if ! install_vault; then
-            log ERROR "Failed to install vault"
-            failed=true
-        fi
-    else
-        log INFO "vault is already installed"
-    fi
+    # Install tools
+    local tools=(
+        vault
+        argo
+        argocd
+        velero
+        pluto
+        rancher
+    )
 
-    if ! command -v argo >/dev/null 2>&1; then
-        if ! install_argo; then
-            log ERROR "Failed to install argo"
-            failed=true
-        fi
-    else
-        log INFO "argo is already installed"
-    fi
-    
-    # Install remaining tools from TOOLS array
-    for tool in "${!TOOLS[@]}"; do
-        # Skip tools that have dedicated install functions
-        [[ "$tool" == "vault" || "$tool" == "argo" ]] && continue
-        
+    for tool in "${tools[@]}"; do
         if ! command -v "$tool" >/dev/null 2>&1; then
-            IFS=: read -r repo pattern bin_name <<< "${TOOLS[$tool]}"
-            version=$(get_latest_version "$repo" || echo "")
-            if [[ -z "$version" ]]; then
-                log ERROR "Failed to get latest version for $tool"
-                failed=true
-                continue
-            fi
-            log INFO "Installing $tool version $version"
+            log INFO "Installing $tool"
             if [[ "$tool" == "velero" ]]; then
+                version=$(get_latest_version "vmware-tanzu/velero")
                 if ! install_velero "$version"; then
                     log ERROR "Failed to install $tool"
                     failed=true
                 fi
-                continue
-            fi
-            if ! install_tool "$tool" "$repo" "$version" "$pattern" "$bin_name"; then
-                log ERROR "Failed to install $tool"
-                failed=true
-                continue
+            else
+                if ! "install_$tool"; then
+                    log ERROR "Failed to install $tool"
+                    failed=true
+                fi
             fi
         else
             log INFO "$tool is already installed"
         fi
     done
+
+    setup_krew
 
     if [[ "$failed" == "true" ]]; then
         return 1
@@ -396,25 +407,6 @@ setup_completions() {
     done
 }
 
-setup_krew() {
-    if ! command -v kubectl-krew >/dev/null 2>&1; then
-        local tmpdir
-        tmpdir=$(mktemp -d)
-        add_cleanup "$tmpdir"
-        
-        cd "$tmpdir" || exit 1
-        if ! download_file "https://github.com/kubernetes-sigs/krew/releases/latest/download/krew-linux_arm64.tar.gz" "krew.tar.gz"; then
-            return 1
-        fi
-        tar zxf "krew.tar.gz"
-        ./krew-linux_arm64 install krew
-
-        export PATH="${KREW_ROOT:-$HOME/.krew}/bin:$PATH"
-        kubectl krew install neat
-        kubectl krew install image
-    fi
-}
-
 main() {
     local start_time=$SECONDS
     trap cleanup EXIT
@@ -433,21 +425,4 @@ main() {
     ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME/nixpkgs/config.nix"
     
     setup_nix
-    NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
-    
-    install_tools || true  # Continue even if some tools fail to install
-    
-    update_paths
-    setup_completions
-    
-    if [[ ! -d "$HOME/.zsh/pure" ]]; then
-        git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
-    fi
-    
-    setup_krew
-    
-    touch "$HOME/.privaterc"
-    log INFO "Setup completed in $((SECONDS - start_time)) seconds"
-}
-
-main
+    NIXPKGS_ALLOW
