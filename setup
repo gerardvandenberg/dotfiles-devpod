@@ -14,7 +14,11 @@ readonly TOOLS=(
     "rancher:rancher/cli:cli-VERSION-linux-arm64.tar.gz:rancher"
 )
 
-log() { printf '[%s] [%s] %s\n' "$(date +%T)" "$1" "$2"; }
+log() { 
+    local level="$1"
+    local message="$2"
+    printf '[%s] [%s] %s\n' "$(date +%T)" "$level" "$message" >&2
+}
 
 cleanup() {
     [[ -d "$TMPDIR" ]] && rm -rf "$TMPDIR"
@@ -33,47 +37,39 @@ extract_archive() {
     case "$type" in
         tar.gz) 
             tar xzf "$archive" -C "$extract_dir"
-            log INFO "Contents of extract directory:"
-            find "$extract_dir" -type f -ls
             ;;
         zip)
             unzip -q "$archive" -d "$extract_dir"
-            log INFO "Contents of extract directory:"
-            find "$extract_dir" -type f -ls
             ;;
         gz)
             local output_file="$extract_dir/$(basename "$archive" .gz)"
             gunzip -c "$archive" > "$output_file"
             chmod +x "$output_file"
-            log INFO "Created gunzipped file: $output_file"
             ;;
         *) log ERROR "Unsupported archive type: $type"; return 1 ;;
     esac
 }
 
 get_latest_version() {
+    local repo="$1"
     local version
-    version=$(curl -sS "https://api.github.com/repos/$1/releases/latest" | jq -r '.tag_name // empty')
-    log INFO "Latest version for $1: $version"
-    echo "$version"
+    version=$(curl -sS "https://api.github.com/repos/$repo/releases/latest" | jq -r '.tag_name // empty')
+    [[ -n "$version" ]] || { log ERROR "Failed to get version for $repo"; return 1; }
+    log INFO "Latest version for $repo: $version"
+    printf "%s" "${version#v}"  # Remove 'v' prefix if present and return
 }
 
 verify_binary() {
     local bin="$1" name="$2"
     
-    log INFO "Verifying binary: $bin for $name"
     [[ -x "$bin" ]] || { log ERROR "Binary $bin not executable"; return 1; }
     
     case "$name" in
         velero)
-            if [[ -x "$bin" ]]; then
-                log INFO "Velero binary verified executable"
-                return 0
-            fi
+            [[ -x "$bin" ]] && return 0
             ;;
         argocd)
             if file "$bin" | grep -q "ARM aarch64"; then
-                log INFO "ArgoCD binary verified as ARM64"
                 return 0
             else
                 log ERROR "Invalid architecture for $name"
@@ -91,39 +87,22 @@ verify_binary() {
 
 find_binary() {
     local extract_dir="$1" bin_name="$2"
-    log INFO "Searching for binary $bin_name in $extract_dir"
-    
-    # First try exact name match
-    local binary_path
-    binary_path=$(find "$extract_dir" -type f -name "$bin_name" -print -quit)
-    
-    # If not found, try case-insensitive search
-    if [[ -z "$binary_path" ]]; then
-        log INFO "Exact match not found, trying case-insensitive search"
-        binary_path=$(find "$extract_dir" -type f -iname "$bin_name" -print -quit)
-    fi
-    
-    # If still not found, list all files for debugging
-    if [[ -z "$binary_path" ]]; then
-        log INFO "Binary not found, listing all files:"
-        find "$extract_dir" -type f -ls
-        return 1
-    fi
-    
-    echo "$binary_path"
+    find "$extract_dir" -type f -name "$bin_name" -print -quit
 }
 
 install_tool() {
     local name="$1" repo="$2" pattern="$3" bin_name="$4"
     TMPDIR=$(mktemp -d)
-    log INFO "Installing $name (TMPDIR: $TMPDIR)"
+    log INFO "Installing $name"
     
     local version
-    version=$(get_latest_version "$repo") || { log ERROR "Failed to get version for $name"; return 1; }
+    version=$(get_latest_version "$repo") || return 1
     
-    local url="https://github.com/${repo}/releases/download/${version}/${pattern/VERSION/${version#v}}"
+    # Construct URL, ensuring proper version substitution
+    local url="https://github.com/${repo}/releases/download/v${version}/${pattern/VERSION/${version}}"
+    log INFO "Download URL: $url"
+    
     local binary_path
-    
     if [[ "$url" == *.tar.gz || "$url" == *.zip || "$url" == *.gz ]]; then
         local archive="$TMPDIR/$name.archive"
         local extract_dir="$TMPDIR/extract"
@@ -133,17 +112,13 @@ install_tool() {
         extract_archive "$archive" "${url##*.}" "$extract_dir" || return 1
         
         binary_path=$(find_binary "$extract_dir" "$bin_name")
-        if [[ -z "$binary_path" ]]; then
-            log ERROR "Binary $bin_name not found after extraction"
-            return 1
-        fi
+        [[ -n "$binary_path" ]] || { log ERROR "Binary $bin_name not found after extraction"; return 1; }
     else
         binary_path="$TMPDIR/$bin_name"
         download_file "$url" "$binary_path" || return 1
         chmod +x "$binary_path"
     fi
     
-    log INFO "Moving binary from $binary_path to $HOME/.local/bin/$bin_name"
     mv "$binary_path" "$HOME/.local/bin/$bin_name"
     verify_binary "$HOME/.local/bin/$bin_name" "$name"
 }
