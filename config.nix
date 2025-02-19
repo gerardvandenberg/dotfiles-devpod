@@ -20,6 +20,8 @@
         bind
         inetutils
         netcat
+        file
+        tree
         lazygit
         gost
         rke
