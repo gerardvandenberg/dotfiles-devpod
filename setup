@@ -425,4 +425,19 @@ main() {
     ln -sf "$PWD/config.nix" "$XDG_CONFIG_HOME/nixpkgs/config.nix"
     
     setup_nix
-    NIXPKGS_ALLOW
+    NIXPKGS_ALLOW_UNFREE=1 TERM=dumb nix-env -iA nixpkgs.myPackages
+    
+    install_tools || true  # Continue even if some tools fail to install
+    
+    update_paths
+    setup_completions
+    
+    if [[ ! -d "$HOME/.zsh/pure" ]]; then
+        git clone --depth 1 https://github.com/sindresorhus/pure.git "$HOME/.zsh/pure"
+    fi
+    
+    setup_krew
+    
+    touch "$HOME/.privaterc"
+    log INFO "Setup completed in $((SECONDS - start_time)) seconds"
+}
